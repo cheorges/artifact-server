@@ -206,9 +206,20 @@ The server then refuses to start unless `ARTIFACT_SERVER_OIDC_ISSUER` is
 `https://login.microsoftonline.com/<tenant id>/v2.0` and
 `ARTIFACT_SERVER_OIDC_SUBJECT_CLAIM` is `oid`: the directory knows people by
 their object id only. It asks Microsoft Graph with the sign-in application's
-client credentials, so that application needs the Graph application permission
-`GroupMember.Read.All` with administrator consent, and outbound access to
-`login.microsoftonline.com` and `graph.microsoft.com`. The sign-in client's
+client credentials, so that application needs two Graph application permissions
+with administrator consent, and outbound access to `login.microsoftonline.com`
+and `graph.microsoft.com`:
+
+| Permission | Used for | Without it |
+|---|---|---|
+| `GroupMember.Read.All` | finding a group by name or address, reading it by id | no group can be searched or added |
+| `User.Read.All` | reading which groups a signed-in person is in | groups can be added, but give nobody access |
+
+`User.Read.All` allows more than the server uses: the server asks only for the
+group ids of the person who is signed in
+([decision 0034](../project/spec/decisions/0034-grants-to-groups.md)). The server
+keeps its Graph token for up to an hour, so a permission granted or removed
+takes effect after a restart or within the hour. The sign-in client's
 secret is used unless `ARTIFACT_SERVER_ENTRA_GROUPS_CLIENT_SECRET` or
 `ARTIFACT_SERVER_ENTRA_GROUPS_CLIENT_SECRET_FILE` names another. The server only
 reads, and stores a granted group's id and name, never its members.

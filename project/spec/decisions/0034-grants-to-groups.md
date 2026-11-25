@@ -31,8 +31,11 @@ had when it was added. The id decides access; the name is what people read.
 
 ### The server reads the directory
 
-The server asks Microsoft Graph with one application permission,
-`GroupMember.Read.All`, using client credentials of the sign-in application.
+The server asks Microsoft Graph with two application permissions, using
+client credentials of the sign-in application: `GroupMember.Read.All` to find
+groups, and `User.Read.All` to read which groups a signed-in person is in.
+The second was not planned. Graph refuses the per-member call without it (see
+"The per-member call needs a user permission" below).
 A groups claim in the token was rejected: it needs the directory team to
 assign every shareable group to the application, and while assignment is
 required for sign-in an assigned group's members could also sign in.
@@ -129,16 +132,30 @@ people by the issuer's `sub`, which the directory does not know, so it
 carries the schema and the shared queries but no directory and refuses group
 grants.
 
-### If the per-member call is refused
+### The per-member call needs a user permission
 
 Membership is read with the per-member call
-(`/users/{id}/transitiveMemberOf`), which the permission table lists as
-allowed for `GroupMember.Read.All`. It cannot be tried before the consent is
-granted. If the directory refuses it, group access stays closed until the
-adapter reads membership with the group-side call
-(`/groups/{id}/transitiveMembers`). That call answers "who is in this group",
-not "which groups is this person in", so the switch also changes the port's
-membership method and its caller; it is a code change, not a setting.
+(`/users/{id}/transitiveMemberOf`). Microsoft's permission table lists
+`GroupMember.Read.All` among the permissions for it, and this decision first
+took that as sufficient. It is not: on a real Entra tenant (2026-11-16) Graph
+answered the call with 403 while group search worked with the same token, and
+accepted it once the application also had `User.Read.All`, the table's least
+privileged application permission for that call. `User.ReadBasic.All` was not
+tried.
+
+`User.Read.All` allows more than the server uses: it could read every
+person's profile. The server makes one call per signed-in person, for that
+person's own object id, and asks for group ids only. An installation that
+must not hold a user permission needs the adapter to read membership with the
+group-side call (`/groups/{id}/transitiveMembers`), which
+`GroupMember.Read.All` covers by the same table and which is unproven. That
+call answers "who is in this group", not "which groups is this person in", so
+it also changes the port's membership method and its caller; it is a code
+change, not a setting.
+
+The server keeps its Graph token until shortly before it expires, an hour as
+a rule. A permission granted or removed in the directory therefore takes
+effect when the token is renewed or the server restarts.
 
 ## Conformance
 

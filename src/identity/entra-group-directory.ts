@@ -60,8 +60,9 @@ interface AccessToken {
 
 /**
  * Read groups and memberships from Microsoft Entra through Microsoft Graph
- * with client credentials and the application permission
- * `GroupMember.Read.All` (decision 0034). Read-only. Every failure rejects
+ * with client credentials and the application permissions
+ * `GroupMember.Read.All`, for groups, and `User.Read.All`, for a person's
+ * memberships (decision 0034). Read-only. Every failure rejects
  * with `DirectoryUnavailable`, which names the HTTP status at most: never
  * the secret, the token, or a response body.
  *
