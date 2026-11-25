@@ -292,12 +292,12 @@ export function ReviewShareControl({
                 <div className="as-share-access-summary">
                   <HugeiconsIcon
                     aria-hidden="true"
-                    icon={publicArtifact ? Globe02Icon : SecurityLockIcon}
+                    icon={publicArtifact && publicLinksAvailable ? Globe02Icon : SecurityLockIcon}
                     strokeWidth={1.8}
                   />
                   <p>
                     People with access to this Artifact Server can review this exact version.
-                    {publicArtifact ? " The latest raw artifact is public." : ""}
+                    {publicArtifact && publicLinksAvailable ? " The latest raw artifact is public." : ""}
                   </p>
                   {canManageAccess ? (
                     <button
