@@ -469,6 +469,146 @@ describe("Cloudflare D1 comments", () => {
     }
   }, 120_000);
 
+  it("AUTH-037 AUTH-038: D1 adds the grant table on upgrade, shares a restricted artifact with members by email, holds the cap, and ends access on removal", async () => {
+    const grantsDirectory = await mkdtemp(
+      join(tmpdir(), "artifact-server-cloudflare-grants-"),
+    );
+    let grantsWorker = await startWorker(grantsDirectory);
+    try {
+      const target = await publishArtifact(grantsWorker, "grants-target-publish-1");
+      await grantsWorker.stop();
+
+      // Members and their keys exist only in D1; Ada owns the restricted page,
+      // and the database is rewound to the revision before grants.
+      const d1File = await findD1DatabaseFile(grantsDirectory);
+      const ada = memberKey("ada");
+      const ben = memberKey("ben");
+      const carl = memberKey("carl");
+      const database = new DatabaseSync(d1File);
+      try {
+        const {installationId} = z.object({installationId: z.string()}).parse(
+          database.prepare(
+            "SELECT installation_id AS installationId FROM projects LIMIT 1",
+          ).get(),
+        );
+        const insertMember = database.prepare(`
+          INSERT INTO installation_members
+            (id, installation_id, email, display_name, role, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 'member', 'active', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z')
+        `);
+        const insertKey = database.prepare(`
+          INSERT INTO managed_api_keys
+            (id, installation_id, name, prefix, secret_digest, principal_id, principal_kind,
+             capabilities_json, authorized_by_principal_id, created_at, expires_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'human', ?, ?, '2026-11-10T00:00:00.000Z', '2099-01-01T00:00:00.000Z')
+        `);
+        for (const member of [ada, ben, carl]) {
+          insertMember.run(member.memberId, installationId, member.email, member.name);
+          insertKey.run(
+            member.keyId,
+            installationId,
+            `${member.name}'s key`,
+            member.keyId,
+            createHash("sha256").update(member.token).digest("hex"),
+            member.memberId,
+            JSON.stringify([
+              "artifact:create",
+              "artifact:manage:any",
+              "artifact:publish:any",
+              "artifact:read",
+              "comment:write",
+              "content-session:issue",
+            ]),
+            member.memberId,
+          );
+        }
+        database.prepare("UPDATE artifacts SET owner_principal_id = ?, restricted = 1 WHERE id = ?")
+          .run(ada.memberId, target.artifact.id);
+        database.exec(`
+          DROP TABLE artifact_grants;
+          UPDATE artifact_server_schema SET version = 11 WHERE component = 'runtime';
+        `);
+      } finally {
+        database.close();
+      }
+
+      grantsWorker = await startWorker(grantsDirectory);
+      const artifactUrl = `${origin}/api/v1/artifacts/${target.artifact.id}`;
+      const as = (
+        member: MemberKey,
+        url: string,
+        request: {readonly body?: string; readonly method?: string} = {},
+      ) => grantsWorker.fetch(url, {
+        body: request.body ?? null,
+        headers: {
+          Authorization: `Bearer ${member.token}`,
+          "Content-Type": "application/json",
+        },
+        method: request.method ?? "GET",
+      });
+      const changeGrants = (
+        member: MemberKey,
+        change: {readonly add?: readonly string[]; readonly remove?: readonly string[]},
+      ) => as(member, `${artifactUrl}/grants`, {body: JSON.stringify(change), method: "PATCH"});
+      const grantSchema = z.object({
+        active: z.boolean(),
+        grants: z.array(z.object({grantee: z.string(), kind: z.literal("email")})),
+      });
+
+      // The Worker migrates on its first request.
+      expect((await as(ben, artifactUrl)).status).toBe(404);
+      const upgraded = new DatabaseSync(d1File, {readOnly: true});
+      try {
+        expect(schemaVersionRowSchema.parse(upgraded.prepare(
+          "SELECT version FROM artifact_server_schema WHERE component = 'runtime'",
+        ).get()).version).toBe(12);
+        expect(upgraded.prepare("PRAGMA table_info(artifact_grants)").all()).toHaveLength(5);
+      } finally {
+        upgraded.close();
+      }
+
+      const granted = await changeGrants(ada, {add: [" Ben@Example.test "]});
+      expect(granted.status).toBe(200);
+      expect(grantSchema.parse(await granted.json())).toStrictEqual({
+        active: true,
+        grants: [{grantee: "ben@example.test", kind: "email"}],
+      });
+      expect((await as(ben, artifactUrl)).status).toBe(200);
+      expect((await as(carl, artifactUrl)).status).toBe(404);
+      const shared = z.object({
+        artifacts: z.array(z.object({artifact: z.object({id: z.string()})})),
+      }).parse(await (await as(ben, `${origin}/api/v1/artifacts?scope=shared_with_me`)).json());
+      expect(shared.artifacts.map(({artifact}) => artifact.id)).toStrictEqual([target.artifact.id]);
+      expect((await as(ben, `${artifactUrl}/grants`)).status).toBe(403);
+
+      // One change above the cap fails as a whole and changes nothing.
+      const tooMany = await changeGrants(ada, {
+        add: Array.from({length: 100}, (_, index) => `person${index}@example.test`),
+      });
+      expect(tooMany.status).toBe(409);
+      expect(failureSchema.parse(await tooMany.json()).error.code).toBe("GRANT_LIMIT_REACHED");
+      expect(grantSchema.parse(await (await as(ada, `${artifactUrl}/grants`)).json()).grants
+        .map(({grantee}) => grantee)).toStrictEqual(["ben@example.test"]);
+
+      // Removing the grant ends Ben's open content access at once.
+      expect((await as(ben, `${artifactUrl}/content-sessions`, {method: "POST"})).status).toBe(201);
+      expect((await changeGrants(ada, {remove: ["ben@example.test"]})).status).toBe(200);
+      expect((await as(ben, artifactUrl)).status).toBe(404);
+      const revoked = new DatabaseSync(d1File, {readOnly: true});
+      try {
+        expect(z.object({total: z.number()}).parse(revoked.prepare(`
+          SELECT (SELECT COUNT(*) FROM content_sessions WHERE principal_id = ?)
+            + (SELECT COUNT(*) FROM content_bootstraps WHERE principal_id = ?) AS total
+        `).get(ben.memberId, ben.memberId)).total).toBe(0);
+      } finally {
+        revoked.close();
+      }
+    } finally {
+      await grantsWorker.stop();
+      await rm(grantsDirectory, {force: true, recursive: true});
+    }
+  }, 120_000);
+
   it("AUTH-035: names a page of owners larger than one D1 statement can bind parameters for", async () => {
     const manyDirectory = await mkdtemp(
       join(tmpdir(), "artifact-server-cloudflare-many-owners-"),
@@ -800,7 +940,7 @@ describe("Cloudflare D1 comments", () => {
       try {
         expect(schemaVersionRowSchema.parse(upgraded.prepare(
           "SELECT version FROM artifact_server_schema WHERE component = 'runtime'",
-        ).get()).version).toBe(11);
+        ).get()).version).toBe(12);
         const columns = z.array(tableColumnRowSchema)
           .parse(upgraded.prepare("PRAGMA table_info(login_attempts)").all())
           .map(({name}) => name);
@@ -829,6 +969,26 @@ function jsonHeaders() {
   return {
     Authorization: `Bearer ${apiToken}`,
     "Content-Type": "application/json",
+  };
+}
+
+/** A member and the API key bound to them, both seeded straight into D1. */
+interface MemberKey {
+  readonly email: string;
+  readonly keyId: string;
+  readonly memberId: string;
+  readonly name: string;
+  readonly token: string;
+}
+
+function memberKey(name: string): MemberKey {
+  const keyId = `key_${createHash("sha256").update(`key:${name}`).digest("hex").slice(0, 32)}`;
+  return {
+    email: `${name}@example.test`,
+    keyId,
+    memberId: `member_${name}`,
+    name,
+    token: `as_key_${keyId}_${createHash("sha256").update(`secret:${name}`).digest("base64url")}`,
   };
 }
 
