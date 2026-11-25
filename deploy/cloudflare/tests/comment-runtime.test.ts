@@ -535,6 +535,7 @@ describe("Cloudflare D1 comments", () => {
           .run(ada.memberId, target.artifact.id);
         database.exec(`
           DROP TABLE artifact_grants;
+          ALTER TABLE actions DROP COLUMN grantee;
           UPDATE artifact_server_schema SET version = 11 WHERE component = 'runtime';
         `);
       } finally {
@@ -574,8 +575,14 @@ describe("Cloudflare D1 comments", () => {
       try {
         expect(schemaVersionRowSchema.parse(upgraded.prepare(
           "SELECT version FROM artifact_server_schema WHERE component = 'runtime'",
-        ).get()).version).toBe(12);
+        ).get()).version).toBe(13);
         expect(upgraded.prepare("PRAGMA table_info(artifact_grants)").all()).toHaveLength(5);
+        // Revision 13 rebuilt the action table with a grantee column and kept its rows.
+        expect(z.array(z.object({name: z.string()})).parse(upgraded.prepare("PRAGMA table_info(actions)").all())
+          .map(({name}) => name)).toContain("grantee");
+        expect(z.array(z.object({action: z.string(), grantee: z.null()})).parse(upgraded.prepare(
+          "SELECT action, grantee FROM actions WHERE artifact_id = ?",
+        ).all(target.artifact.id))).toContainEqual({action: "publish", grantee: null});
         // The recovery check reads every table, so a restore that loses grants fails.
         const tables = z.array(z.object({name: z.string()})).parse(upgraded.prepare(`
           SELECT name FROM sqlite_master
@@ -997,7 +1004,7 @@ describe("Cloudflare D1 comments", () => {
       try {
         expect(schemaVersionRowSchema.parse(upgraded.prepare(
           "SELECT version FROM artifact_server_schema WHERE component = 'runtime'",
-        ).get()).version).toBe(12);
+        ).get()).version).toBe(13);
         const columns = z.array(tableColumnRowSchema)
           .parse(upgraded.prepare("PRAGMA table_info(login_attempts)").all())
           .map(({name}) => name);

@@ -658,6 +658,22 @@ const addArtifactGrants = Effect.gen(function*() {
   );
 });
 
+/** Name the address on sharing rows of the activity, and allow their two kinds. */
+const addActionGrantee = Effect.gen(function*() {
+  const sql = yield* SqlClient;
+  yield* sql.unsafe("ALTER TABLE actions ADD COLUMN grantee TEXT");
+  yield* sql.unsafe(`
+    ALTER TABLE actions
+      DROP CONSTRAINT actions_action_check,
+      ADD CONSTRAINT actions_action_check
+        CHECK (action IN (
+          'publish', 'restore', 'change_access', 'change_tags', 'delete',
+          'comment_create', 'comment_reply', 'comment_update',
+          'comment_resolve', 'comment_reopen', 'comment_delete',
+          'grant_add', 'grant_remove'
+        ))`);
+});
+
 const addArtifactSearchName = Effect.gen(function*() {
   const sql = yield* SqlClient;
   yield* sql.unsafe("ALTER TABLE artifacts ADD COLUMN search_name TEXT");
@@ -717,10 +733,11 @@ const migrationLoader = Migrator.fromRecord({
   "0012_artifact_owner": addArtifactOwner,
   "0013_staged_upload_grant": addStagedUploadGrant,
   "0014_artifact_grants": addArtifactGrants,
+  "0015_action_grantee": addActionGrantee,
 });
 
 /** Schema revision required by this Artifact Server build. */
-export const requiredPostgresSchemaVersion = 14;
+export const requiredPostgresSchemaVersion = 15;
 
 /** Migration compatibility observed without changing Postgres. */
 export interface PostgresMigrationStatus {
@@ -817,6 +834,9 @@ export const readPostgresMigrationStatus = Effect.gen(function*() {
   }, {
     migration_id: 14,
     name: "artifact_grants",
+  }, {
+    migration_id: 15,
+    name: "action_grantee",
   }] as const;
   const observedRequiredHistory = rows.filter(
     (row) => row.migration_id <= requiredPostgresSchemaVersion,

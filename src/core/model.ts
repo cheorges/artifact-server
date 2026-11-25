@@ -23,6 +23,8 @@ export const artifactActionKinds = {
   commentResolve: "comment_resolve",
   commentUpdate: "comment_update",
   delete: "delete",
+  grantAdd: "grant_add",
+  grantRemove: "grant_remove",
   link: "link",
   publish: "publish",
   relink: "relink",
@@ -127,6 +129,8 @@ export interface ArtifactActionRecord {
   readonly artifactId: string;
   readonly authorizedByPrincipalId: string | null;
   readonly createdAt: string;
+  /** The address a sharing row (`grant_add`, `grant_remove`) names; null for every other kind. */
+  readonly grantee: string | null;
   readonly id: string;
   readonly idempotencyKey: string;
   readonly principalId: string;

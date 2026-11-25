@@ -498,6 +498,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
         const sql = yield* SqlClient;
         const statements = [
           "DROP TABLE artifact_grants",
+          "ALTER TABLE actions DROP COLUMN grantee",
           `ALTER TABLE actions
             DROP CONSTRAINT actions_action_check,
             ADD CONSTRAINT actions_action_check
@@ -2291,7 +2292,9 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
         projectId,
       });
       const change = (artifactId: string, add: readonly string[], remove: readonly string[] = []) =>
-        repository.changeArtifactGrants({add, artifactId, changedAt, principalId: owner, projectId, remove});
+        repository.changeArtifactGrants({
+          add, artifactId, authorizedByPrincipalId: null, changedAt, principalId: owner, projectId, remove,
+        });
 
       // Two concurrent adds of one address store it once.
       const [first, second] = await Promise.all([

@@ -184,6 +184,8 @@ const artifactActionKindSchema = z.enum([
   artifactActionKinds.commentResolve,
   artifactActionKinds.commentUpdate,
   artifactActionKinds.delete,
+  artifactActionKinds.grantAdd,
+  artifactActionKinds.grantRemove,
   artifactActionKinds.publish,
   artifactActionKinds.restore,
 ]);
@@ -324,6 +326,7 @@ const artifactActionRowSchema = z.object({
   artifactId: z.string(),
   authorizedByPrincipalId: z.string().nullable(),
   createdAt: z.string(),
+  grantee: z.string().nullable(),
   id: z.string(),
   idempotencyKey: z.string(),
   principalId: z.string(),
@@ -2017,11 +2020,13 @@ export class PostgresArtifactRepository implements
           version_id AS "versionId",
           action, principal_id AS "principalId",
           authorized_by_principal_id AS "authorizedByPrincipalId",
-          idempotency_key AS "idempotencyKey", created_at AS "createdAt"
+          idempotency_key AS "idempotencyKey", created_at AS "createdAt",
+          grantee
          FROM actions
          WHERE installation_id = $1 AND project_id = $2 AND artifact_id = $3
            AND ($4::text IS NULL OR created_at < $4
              OR (created_at = $4 AND id < $5))
+           AND ($7::boolean OR action NOT IN ('grant_add', 'grant_remove'))
          ORDER BY created_at DESC, id DESC
          LIMIT $6`,
         [
@@ -2031,6 +2036,7 @@ export class PostgresArtifactRepository implements
           command.cursor?.createdAt ?? null,
           command.cursor?.id ?? null,
           command.limit + 1,
+          command.includeGrantChanges,
         ],
       );
       return pageFromRows(

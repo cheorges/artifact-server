@@ -652,6 +652,7 @@ function makeArtifactManagementService(
     const page = yield* dependencies.repository.listArtifactActions({
       artifactId: artifact.id,
       cursor: command.cursor,
+      includeGrantChanges: true,
       limit,
       projectId: project.id,
     });
@@ -721,6 +722,7 @@ function makeArtifactManagementService(
       return yield* dependencies.repository.changeArtifactGrants({
         add,
         artifactId: artifact.id,
+        authorizedByPrincipalId: command.principal.authorizedByPrincipalId,
         changedAt,
         principalId: command.principal.id,
         projectId: artifact.projectId,

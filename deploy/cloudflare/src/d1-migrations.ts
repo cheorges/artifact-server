@@ -8,7 +8,7 @@ import {defaultGitHistoryMaximumCopiedFiles} from
   "../../../src/git-history/git-history-capability.js";
 
 /** D1 schema revision required by the Cloudflare runtime. */
-export const requiredD1SchemaVersion = 12;
+export const requiredD1SchemaVersion = 13;
 
 /** SQL literal list of every action kind the ledger accepts. */
 const actionKindList = [
@@ -23,6 +23,8 @@ const actionKindList = [
   "'comment_resolve'",
   "'comment_reopen'",
   "'comment_delete'",
+  "'grant_add'",
+  "'grant_remove'",
 ].join(", ");
 
 const schemaSql = `
@@ -102,7 +104,8 @@ const schemaSql = `
     principal_id TEXT NOT NULL,
     authorized_by_principal_id TEXT,
     idempotency_key TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    grantee TEXT
   );
 
   CREATE TABLE IF NOT EXISTS staged_uploads (
@@ -632,6 +635,7 @@ export async function migrateD1(
     await addArtifactSearchNameIfMissing(database);
     await addStagedUploadGrantIfMissing(database);
     await addArtifactOwnerIfMissing(database);
+    await rebuildActionsForGrantsIfNeeded(database);
   }
   await database.batch([
     database.prepare(`
@@ -843,6 +847,48 @@ const widenRegisteredAgentsStatements = [
  * created before this revision already holds the narrow table, so the shared
  * `CREATE TABLE IF NOT EXISTS` leaves it untouched.
  */
+/**
+ * Revision 13: sharing rows name their address and use two new kinds, so the
+ * action table is rebuilt with the wider CHECK and a grantee column.
+ */
+const rebuildActionsForGrantsStatements = [
+  `CREATE TABLE actions_upgrade_snapshot AS SELECT
+    id, project_id, artifact_id, version_id, action, principal_id,
+    authorized_by_principal_id, idempotency_key, created_at
+    FROM actions`,
+  `CREATE TABLE actions_next (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    version_id TEXT NOT NULL REFERENCES versions(id),
+    action TEXT NOT NULL CHECK (action IN (${actionKindList})),
+    principal_id TEXT NOT NULL,
+    authorized_by_principal_id TEXT,
+    idempotency_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    grantee TEXT
+  )`,
+  "DROP TABLE actions",
+  "ALTER TABLE actions_next RENAME TO actions",
+  `INSERT INTO actions (
+    id, project_id, artifact_id, version_id, action, principal_id,
+    authorized_by_principal_id, idempotency_key, created_at, grantee
+  ) SELECT id, project_id, artifact_id, version_id, action, principal_id,
+    authorized_by_principal_id, idempotency_key, created_at, NULL
+    FROM actions_upgrade_snapshot`,
+  "DROP TABLE actions_upgrade_snapshot",
+  `CREATE INDEX IF NOT EXISTS actions_artifact_created
+    ON actions(project_id, artifact_id, created_at DESC, id DESC)`,
+] as const;
+
+async function rebuildActionsForGrantsIfNeeded(database: D1Database): Promise<void> {
+  const columns = await database.prepare("PRAGMA table_info(actions)").all<{name: string}>();
+  if (hasColumn(columns, "grantee")) return;
+  await database.batch(
+    rebuildActionsForGrantsStatements.map((statement) => database.prepare(statement)),
+  );
+}
+
 async function widenRegisteredAgentsIfNeeded(
   database: D1Database,
 ): Promise<void> {

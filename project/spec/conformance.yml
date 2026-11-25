@@ -1820,7 +1820,7 @@ requirements:
     source: {file: artifact-server-product-spec.html, anchor: owner-names}
     acceptance:
       behavior: {id: AUTH-035-B, description: "Members and a service key publish; the HTTP list, details, and activity and the MCP list and get answer each owner's and actor's name, and scope mine over HTTP and MCP lists only the caller's own artifacts."}
-      failure: {id: AUTH-035-F, description: "No answer carries an email address, not even for a member whose display name is their email, a deactivated owner keeps their name, scope mine combined with a tag or search never lists another member's artifact, and an unknown scope is refused over HTTP and MCP."}
+      failure: {id: AUTH-035-F, description: "No owner or actor name in an answer is an email address, not even for a member whose display name is their email (a sharing activity row names the grantee address the owner typed, AUTH-039), a deactivated owner keeps their name, scope mine combined with a tag or search never lists another member's artifact, and an unknown scope is refused over HTTP and MCP."}
     deployments: *all
     status: implementing
     proof_gap: AUTH-035-B and AUTH-035-F run against the local SQLite server; a service test proves the answer without names when the lookup fails; browser tests prove the catalog, Details, Activity, the Mine filter, and the WebMCP list in Chromium; and Postgres and D1 runtime tests cover the name lookup, rotated service keys and their tie-break, a display name that is the email, the owner filter, and a D1 page of 55 owners. Accepted, not tested beyond WebMCP. On a single-person local installation, mine lists what the signed-in person published, not what the CLI's own service key published. No deployment-specific evidence is recorded.
@@ -1867,6 +1867,20 @@ requirements:
     status: implementing
     proof_gap: AUTH-038-B and AUTH-038-F run against the local SQLite server through HTTP and MCP; SQLite storage tests prove the schema, the cap, and revocation on switching and on removal; a Postgres runtime test covers concurrent adds, the cap, and both revocations; a D1 runtime test covers the upgrade, the cap, and both revocations; and a browser test proves the Share dialog's people section in Chromium. No deployment-specific evidence is recorded.
     depends_on: [AUTH-031, AUTH-037]
+    evidence: []
+
+  - id: AUTH-039
+    kind: security
+    behavior: Every addition and removal of a person on an artifact's grants is recorded in its activity as one row per person, naming the address, the actor and the time; only the owner and administrators see these rows.
+    owner: authorization
+    source: {file: decisions/0033-grants-to-persons.md, anchor: sharing-changes-are-recorded}
+    acceptance:
+      behavior: {id: AUTH-039-B, description: "Adding and removing people through HTTP and MCP writes one grant_add or grant_remove row per changed address with the actor, the time and, for an API key, its owner; the owner and a signed-in administrator list them in the artifact's activity, also after the artifact is deleted."}
+      failure: {id: AUTH-039-F, description: "Repeated adds, removals of addresses not granted, and refused changes write no row; grantees, other members, and keys without the right never receive a sharing row, and paging their activity skips sharing rows without short or empty pages."}
+    deployments: *all
+    status: implementing
+    proof_gap: To be filled in Task 5 with the tests that exist.
+    depends_on: [AUTH-038]
     evidence: []
 
   - id: SEC-001

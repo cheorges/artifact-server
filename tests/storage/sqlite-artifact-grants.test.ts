@@ -205,7 +205,7 @@ describe("SQLite artifact grants", () => {
   test("AUTH-037 foundation: a grant matches an active member by current email only", async () => {
     const artifact = await publishRestricted("Grant target", "member_owner");
     const granted = await repository.changeArtifactGrants({
-      add: [anna], artifactId: artifact.artifactId, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
+      add: [anna], artifactId: artifact.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
     });
     expect(granted).toStrictEqual({
       active: true,
@@ -223,7 +223,7 @@ describe("SQLite artifact grants", () => {
   test("AUTH-038 foundation: adding twice is a no-op and the list reports whether it applies", async () => {
     const artifact = await publishRestricted("Repeated grant", "member_owner");
     const command = {
-      add: [anna], artifactId: artifact.artifactId, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
+      add: [anna], artifactId: artifact.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
     };
     await repository.changeArtifactGrants(command);
     const repeated = await repository.changeArtifactGrants({...command, changedAt: "2026-11-11T00:00:00.000Z", principalId: "member_admin"});
@@ -240,15 +240,15 @@ describe("SQLite artifact grants", () => {
     const artifact = await publishRestricted("Capped grants", "member_owner");
     const hundred = Array.from({length: 100}, (_, index) => `person${index}@company.example`);
     await repository.changeArtifactGrants({
-      add: hundred, artifactId: artifact.artifactId, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
+      add: hundred, artifactId: artifact.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
     });
     await expect(repository.changeArtifactGrants({
-      add: [anna], artifactId: artifact.artifactId, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
+      add: [anna], artifactId: artifact.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
     })).rejects.toBeInstanceOf(GrantLimitReached);
     expect((await repository.listArtifactGrants(artifact.projectId, artifact.artifactId)).grants).toHaveLength(100);
 
     const swapped = await repository.changeArtifactGrants({
-      add: [anna], artifactId: artifact.artifactId, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: ["person0@company.example"],
+      add: [anna], artifactId: artifact.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: ["person0@company.example"],
     });
     expect(swapped.grants).toHaveLength(100);
     expect(swapped.grants.map(({grantee}) => grantee)).toContain(anna);
@@ -261,10 +261,10 @@ describe("SQLite artifact grants", () => {
     const open = await publishRestricted("Open to members", "member_owner");
     database.prepare("UPDATE artifacts SET restricted = 0 WHERE id = ?").run(open.artifactId);
     await repository.changeArtifactGrants({
-      add: [anna], artifactId: granted.artifactId, changedAt, principalId: "member_owner", projectId: granted.projectId, remove: [],
+      add: [anna], artifactId: granted.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: granted.projectId, remove: [],
     });
     await repository.changeArtifactGrants({
-      add: [anna], artifactId: open.artifactId, changedAt, principalId: "member_owner", projectId: open.projectId, remove: [],
+      add: [anna], artifactId: open.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: open.projectId, remove: [],
     });
     const {projectId} = granted;
     const names = async (command: ListArtifacts) =>
@@ -284,7 +284,7 @@ describe("SQLite artifact grants", () => {
     const artifact = await publishRestricted("Switch target", "member_owner");
     database.prepare("UPDATE artifacts SET restricted = 0 WHERE id = ?").run(artifact.artifactId);
     await repository.changeArtifactGrants({
-      add: [anna], artifactId: artifact.artifactId, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
+      add: [anna], artifactId: artifact.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
     });
     for (const principalId of ["member_owner", "member_anna", "member_ben", "member_admin"]) {
       insertContentAccess(database, `token-${principalId}`, principalId, artifact);
@@ -311,14 +311,14 @@ describe("SQLite artifact grants", () => {
     const first = await publishRestricted("First shared", "member_owner");
     const second = await publishRestricted("Second shared", "member_owner");
     await Promise.all([first, second].map((artifact) => repository.changeArtifactGrants({
-      add: [anna], artifactId: artifact.artifactId, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
+      add: [anna], artifactId: artifact.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
     })));
     for (const artifact of [first, second]) {
       insertContentAccess(database, `anna-${artifact.artifactId}`, "member_anna", artifact);
       insertContentAccess(database, `owner-${artifact.artifactId}`, "member_owner", artifact);
     }
     await repository.changeArtifactGrants({
-      add: [], artifactId: first.artifactId, changedAt, principalId: "member_owner", projectId: first.projectId, remove: [anna],
+      add: [], artifactId: first.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: first.projectId, remove: [anna],
     });
     expect(contentAccessHolders(database, first.artifactId)).toStrictEqual(["member_owner", "member_owner"]);
     expect(contentAccessHolders(database, second.artifactId))
@@ -328,14 +328,70 @@ describe("SQLite artifact grants", () => {
   test("AUTH-038 foundation: removing the owner's own address keeps the owner's content access", async () => {
     const artifact = await publishRestricted("Owner removes self", "member_owner");
     await repository.changeArtifactGrants({
-      add: [anna, "owner@company.example"], artifactId: artifact.artifactId, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
+      add: [anna, "owner@company.example"], artifactId: artifact.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
     });
     insertContentAccess(database, "owner-self", "member_owner", artifact);
     insertContentAccess(database, "anna-self", "member_anna", artifact);
     await repository.changeArtifactGrants({
-      add: [], artifactId: artifact.artifactId, changedAt, principalId: "member_owner", projectId: artifact.projectId,
+      add: [], artifactId: artifact.artifactId, authorizedByPrincipalId: null, changedAt, principalId: "member_owner", projectId: artifact.projectId,
       remove: [anna, "owner@company.example"],
     });
     expect(contentAccessHolders(database, artifact.artifactId)).toStrictEqual(["member_owner", "member_owner"]);
+  });
+
+  test("AUTH-039 foundation: the actions table has a nullable grantee column and an older database gains it", () => {
+    const columns = () => columnRowsSchema.parse(database.prepare("PRAGMA table_info(actions)").all())
+      .map(({name}) => name);
+    expect(columns()).toContain("grantee");
+    database.exec("ALTER TABLE actions DROP COLUMN grantee;");
+    database.exec(`PRAGMA user_version = ${requiredSqliteSchemaVersion - 1};`);
+    const reopened = new SqliteArtifactRepository(databasePath);
+    try {
+      expect(schemaVersion(database)).toBe(requiredSqliteSchemaVersion);
+      expect(requiredSqliteSchemaVersion).toBe(16);
+      expect(columns()).toContain("grantee");
+    } finally {
+      reopened.close();
+    }
+  });
+
+  test("AUTH-039 foundation: listing without grant changes skips sharing rows and pages exactly", async () => {
+    const artifact = await publishRestricted("Activity paging", "member_owner");
+    const insertSharingRow = database.prepare(
+      `INSERT INTO actions (
+         id, project_id, artifact_id, version_id, action, principal_id,
+         authorized_by_principal_id, idempotency_key, created_at, grantee
+       ) VALUES (?, ?, ?, ?, 'grant_add', 'member_owner', NULL, ?, ?, ?)`,
+    );
+    for (const index of [0, 1, 2, 3, 4]) {
+      insertSharingRow.run(
+        `sharing-row-${index}`,
+        artifact.projectId,
+        artifact.artifactId,
+        artifact.versionId,
+        `grant_add:${String(index).padStart(32, "0")}`,
+        `2999-01-0${index + 1}T00:00:00.000Z`,
+        `person${index}@company.example`,
+      );
+    }
+    const page = (includeGrantChanges: boolean, limit: number) => repository.listArtifactActions({
+      artifactId: artifact.artifactId,
+      cursor: null,
+      includeGrantChanges,
+      limit,
+      projectId: artifact.projectId,
+    });
+
+    const hidden = await page(false, 1);
+    expect(hidden.items.map(({action}) => action)).toStrictEqual(["publish"]);
+    expect(hidden.nextCursor).toBeNull();
+
+    const shown = await page(true, 2);
+    expect(shown.items.map(({action, grantee}) => ({action, grantee}))).toStrictEqual([
+      {action: "grant_add", grantee: "person4@company.example"},
+      {action: "grant_add", grantee: "person3@company.example"},
+    ]);
+    expect(shown.nextCursor).not.toBeNull();
+    expect((await page(true, 10)).items.at(-1)).toMatchObject({action: "publish", grantee: null});
   });
 });

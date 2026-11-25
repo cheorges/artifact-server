@@ -57,6 +57,13 @@ everyone else's, administrators' included: a content session does not record
 whether a member-bound key opened it, and such a key cannot see a restricted
 artifact, so administrators open it again from the browser.
 
+### Sharing changes are recorded
+
+Every grant addition and removal writes one activity row per person, naming the address, who made the change and when, and
+for an API key, whose key it was. Only real changes are recorded: a repeated add or the removal of an address that is not
+granted writes nothing, and a refused change writes nothing. Only the owner and administrators see these rows, also after
+the artifact is deleted; for everyone else they are left out of the activity. Deleting an artifact records the deletion only.
+
 ### Bounded
 
 At most 100 grants per artifact.
@@ -68,6 +75,8 @@ At most 100 grants per artifact.
   can.
 - **AUTH-038:** only the owner or an administrator reads or changes grants;
   changes are atomic and bounded, and removing access takes effect at once.
+- **AUTH-039:** every grant addition and removal is recorded in the
+  artifact's activity, one row per person, for the owner and administrators only.
 
 ## Rejected alternatives
 

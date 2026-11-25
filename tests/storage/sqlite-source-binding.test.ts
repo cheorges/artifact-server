@@ -404,6 +404,7 @@ async function actionKinds(
   const page = await repository.listArtifactActions({
     artifactId,
     cursor: null,
+    includeGrantChanges: true,
     limit: 50,
     projectId: defaultProjectId,
   });

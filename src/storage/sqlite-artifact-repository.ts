@@ -195,6 +195,8 @@ const artifactActionKindSchema = z.enum([
   artifactActionKinds.commentResolve,
   artifactActionKinds.commentUpdate,
   artifactActionKinds.delete,
+  artifactActionKinds.grantAdd,
+  artifactActionKinds.grantRemove,
   artifactActionKinds.link,
   artifactActionKinds.publish,
   artifactActionKinds.relink,
@@ -262,6 +264,7 @@ const artifactActionRowSchema = z.object({
   artifactId: z.string(),
   authorizedByPrincipalId: z.string().nullable(),
   createdAt: z.string(),
+  grantee: z.string().nullable(),
   id: z.string(),
   idempotencyKey: z.string(),
   principalId: z.string(),
@@ -2115,9 +2118,11 @@ export class SqliteArtifactRepository implements
             principal_id AS principalId,
             authorized_by_principal_id AS authorizedByPrincipalId,
             idempotency_key AS idempotencyKey,
-            created_at AS createdAt
+            created_at AS createdAt,
+            grantee
            FROM actions
            WHERE project_id = ? AND artifact_id = ?
+             AND (? = 1 OR action NOT IN ('grant_add', 'grant_remove'))
              AND (
                ? IS NULL
                OR created_at < ?
@@ -2129,6 +2134,7 @@ export class SqliteArtifactRepository implements
         .all(
           command.projectId,
           command.artifactId,
+          command.includeGrantChanges ? 1 : 0,
           cursorCreatedAt,
           cursorCreatedAt,
           cursorCreatedAt,
@@ -3029,14 +3035,15 @@ export class SqliteArtifactRepository implements
     principalId: string,
     authorizedByPrincipalId: string | null,
     actionId: string | null = null,
+    grantee: string | null = null,
   ): void {
     this.#database
       .prepare(
         `INSERT INTO actions (
           id, project_id, artifact_id, version_id, action, principal_id,
-          authorized_by_principal_id, idempotency_key, created_at
+          authorized_by_principal_id, idempotency_key, created_at, grantee
         ) VALUES (
-          COALESCE(?, lower(hex(randomblob(16)))), ?, ?, ?, ?, ?, ?, ?, ?
+          COALESCE(?, lower(hex(randomblob(16)))), ?, ?, ?, ?, ?, ?, ?, ?, ?
         )`,
       )
       .run(
@@ -3049,6 +3056,7 @@ export class SqliteArtifactRepository implements
         authorizedByPrincipalId,
         idempotencyKey,
         createdAt,
+        grantee,
       );
   }
 
@@ -4938,7 +4946,8 @@ export class SqliteArtifactRepository implements
         principal_id TEXT NOT NULL,
         authorized_by_principal_id TEXT,
         idempotency_key TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        grantee TEXT
       ) STRICT;
 
       CREATE TABLE IF NOT EXISTS staged_uploads (
@@ -5049,6 +5058,7 @@ export class SqliteArtifactRepository implements
     this.#addStagedUploadGrantIfMissing();
     this.#addArtifactOwnerIfMissing();
     this.#addArtifactGrantsIfMissing();
+    this.#addActionGranteeIfMissing();
     this.#database.exec(`
       CREATE INDEX IF NOT EXISTS projects_active_created
         ON projects (archived_at, created_at, id);
@@ -5689,6 +5699,12 @@ export class SqliteArtifactRepository implements
       `);
     });
     this.#database.exec(`PRAGMA user_version = ${requiredSqliteSchemaVersion};`);
+  }
+
+  /** Name the address on sharing rows of the activity (schema 16). */
+  #addActionGranteeIfMissing(): void {
+    if (this.#tableColumns("actions").includes("grantee")) return;
+    this.#database.exec("ALTER TABLE actions ADD COLUMN grantee TEXT");
   }
 
   #addActionAuthorizerColumnIfMissing(): void {

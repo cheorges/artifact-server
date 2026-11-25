@@ -179,6 +179,8 @@ const actionSchema = z.enum([
   artifactActionKinds.commentResolve,
   artifactActionKinds.commentUpdate,
   artifactActionKinds.delete,
+  artifactActionKinds.grantAdd,
+  artifactActionKinds.grantRemove,
   artifactActionKinds.publish,
   artifactActionKinds.restore,
 ]);
@@ -344,6 +346,7 @@ const actionRowSchema = z.object({
   artifactId: z.string(),
   authorizedByPrincipalId: z.string().nullable(),
   createdAt: z.string(),
+  grantee: z.string().nullable(),
   id: z.string(),
   idempotencyKey: z.string(),
   principalId: z.string(),
@@ -2639,13 +2642,15 @@ export function createD1ArtifactRepository(
         SELECT id, project_id AS projectId, artifact_id AS artifactId,
           version_id AS versionId, action, principal_id AS principalId,
           authorized_by_principal_id AS authorizedByPrincipalId,
-          idempotency_key AS idempotencyKey, created_at AS createdAt
+          idempotency_key AS idempotencyKey, created_at AS createdAt, grantee
         FROM actions WHERE project_id = ? AND artifact_id = ?
+          AND (? = 1 OR action NOT IN ('grant_add', 'grant_remove'))
           AND (? IS NULL OR created_at < ? OR (created_at = ? AND id < ?))
         ORDER BY created_at DESC, id DESC LIMIT ?
       `).bind(
         command.projectId,
         command.artifactId,
+        command.includeGrantChanges ? 1 : 0,
         command.cursor?.createdAt ?? null,
         command.cursor?.createdAt ?? null,
         command.cursor?.createdAt ?? null,

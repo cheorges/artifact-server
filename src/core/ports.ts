@@ -154,6 +154,8 @@ export interface RestoreArtifactVersion {
 export interface ChangeArtifactGrants {
   readonly add: readonly string[];
   readonly artifactId: string;
+  /** The member whose API key made the change, or null for a direct session. */
+  readonly authorizedByPrincipalId: string | null;
   readonly changedAt: string;
   readonly principalId: string;
   readonly projectId: string;
@@ -250,6 +252,11 @@ export interface ListArtifacts {
 export interface ListArtifactActions {
   readonly artifactId: string;
   readonly cursor: PageCursor | null;
+  /**
+   * Whether sharing rows (`grant_add`, `grant_remove`) are listed; when false
+   * they are skipped in the query, so paging stays exact.
+   */
+  readonly includeGrantChanges: boolean;
   readonly limit: number;
   readonly projectId: string;
 }
