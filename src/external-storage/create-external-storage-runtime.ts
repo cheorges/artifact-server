@@ -6,6 +6,7 @@ import type {
   ExternalMcpBearerVerifier,
 } from "../application/authentication.js";
 import type {InteractiveIdentityProvider} from "../application/interactive-login.js";
+import type {GroupSharingConfiguration} from "../core/group-directory.js";
 import type {Clock} from "../core/ports.js";
 import type {BrowserAccess} from "../core/browser-access.js";
 import type {ExternalIdentityAdmissionPolicy} from "../core/installation-identity.js";
@@ -91,6 +92,8 @@ export interface ExternalStorageRuntimeConfig {
   readonly gitHistoryProvider?: GitHistoryProvider;
   readonly installationId: string;
   readonly interactiveIdentityProvider?: InteractiveIdentityProvider;
+  /** The installation's directory of groups; absent leaves group sharing off. */
+  readonly groupSharing?: GroupSharingConfiguration;
   readonly localBootstrapCredential?: Redacted.Redacted;
   readonly mcpOAuthResource?: McpOAuthResourceConfiguration;
   readonly objectStorage: ObjectStorageProviderFactory;
@@ -181,6 +184,7 @@ export async function createExternalStorageRuntime(
       identityRepository,
       installationId: config.installationId,
       gitHistory: {read: () => applicationGitHistory.read()},
+      groupSharing: config.groupSharing,
       interactiveIdentityProvider: config.interactiveIdentityProvider ?? null,
       localBootstrapCredential: config.localBootstrapCredential ?? null,
       protectBootstrapAdministrator: false,
@@ -248,6 +252,7 @@ export async function createExternalStorageRuntime(
       contentDomain: config.contentDomain,
       gitHistory: gitHistoryMonitor?.reader ??
         fixedGitHistoryCapabilityReader(gitHistory.capability),
+      groupSharing: config.groupSharing !== undefined,
       publicLinks,
       readiness: () => externalStorageReadiness(database, connectedObjectStorage),
       trustedApplicationOrigin: config.applicationOrigin ?? null,

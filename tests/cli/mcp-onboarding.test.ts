@@ -82,7 +82,7 @@ describe("local MCP onboarding", {timeout: testTimeoutMilliseconds}, () => {
     const first = await connectStdio(dataDirectory);
     const firstTools = await first.client.listTools();
     expect(first.client.getNegotiatedProtocolVersion()).toBe(modernProtocolRevision);
-    expect(firstTools.tools).toHaveLength(34);
+    expect(firstTools.tools).toHaveLength(35);
     const capabilities = await first.client.callTool({
       arguments: {},
       name: "artifact_capabilities",

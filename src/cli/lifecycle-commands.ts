@@ -50,6 +50,7 @@ import {
 import {PostgresDatabase} from "../storage/postgres-database.js";
 import {runCliEffect} from "./run-cli-effect.js";
 import {waitForProcessSignal} from "./wait-for-process-signal.js";
+import {loadGroupSharing} from "./group-directory-configuration.js";
 import {
   assertAtMostOneBrowserLoginProvider,
   loadOidcConfiguration,
@@ -354,6 +355,10 @@ function configureExternalStorageStart(
           ...oidcAuthentication,
         };
       }
+      const groupSharing = await loadGroupSharing(process.env, oidc);
+      if (groupSharing !== null) {
+        serverConfig = {...serverConfig, groupSharing};
+      }
       const server = await startExternalStorageServer(serverConfig);
       const displayHostname = options.host === "0.0.0.0"
         ? "localhost"
@@ -427,6 +432,10 @@ async function startCompactServer(
       ...serverConfig,
       ...oidcAuthentication,
     };
+  }
+  const groupSharing = await loadGroupSharing(process.env, oidc);
+  if (groupSharing !== null) {
+    serverConfig = {...serverConfig, groupSharing};
   }
   return startLocalServer(serverConfig);
 }

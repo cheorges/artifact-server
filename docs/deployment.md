@@ -185,6 +185,44 @@ setting, and one artifact holds at most 100.
 Every addition and removal is recorded in the artifact's activity; only the owner
 and administrators see those entries.
 
+### Share with Microsoft Entra groups
+
+An installation that signs people in through one Microsoft Entra tenant can also
+share a restricted artifact with groups of that directory. The owner or an
+administrator finds a group by the start of a word of its name, or by its exact
+mail address, in the Share dialog, with `artifact_group_search` over MCP, or with
+`GET /api/v1/directory/groups?query=`, and adds it like a person. Everyone the
+directory reports as a member of the group, nested groups included, then gets
+what a person grant gives. Group names are visible to every member through that
+search; members are never listed.
+
+Switch it on with:
+
+```text
+ARTIFACT_SERVER_ENTRA_GROUPS=on
+```
+
+The server then refuses to start unless `ARTIFACT_SERVER_OIDC_ISSUER` is
+`https://login.microsoftonline.com/<tenant id>/v2.0` and
+`ARTIFACT_SERVER_OIDC_SUBJECT_CLAIM` is `oid`: the directory knows people by
+their object id only. It asks Microsoft Graph with the sign-in application's
+client credentials, so that application needs the Graph application permission
+`GroupMember.Read.All` with administrator consent, and outbound access to
+`login.microsoftonline.com` and `graph.microsoft.com`. The sign-in client's
+secret is used unless `ARTIFACT_SERVER_ENTRA_GROUPS_CLIENT_SECRET` or
+`ARTIFACT_SERVER_ENTRA_GROUPS_CLIENT_SECRET_FILE` names another. The server only
+reads, and stores a granted group's id and name, never its members.
+
+A person's groups are remembered for five minutes per server process. Someone
+who leaves a group in the directory loses access after at most 20 minutes (five
+minutes, plus the 15 minutes an open content session lasts); removing the group
+from the artifact ends access at once. When the directory cannot be reached,
+access that rests on a group is refused until it answers again, and access
+through a person grant, ownership, or administration is unaffected. Groups whose
+membership the directory hides cannot be used. People and groups share the limit
+of 100 per artifact. The Cloudflare deployment has no directory and refuses
+group grants.
+
 ## Turn public links off
 
 A public link opens an artifact's current version without sign-in. To keep
