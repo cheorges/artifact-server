@@ -26,6 +26,7 @@ import {
   principalKinds,
 } from "../core/identity.js";
 import {publicLinkPolicies} from "../core/public-link-policy.js";
+import {maximumUploadPlanRequestBytes} from "../core/publishing-limits.js";
 import type {GitHistoryCapabilityReader} from
   "../git-history/git-history-capability.js";
 import {
@@ -103,6 +104,9 @@ export function createMcpHttpAdapter(
     },
     {
       legacy: "stateless",
+      // The HTTP edge already bounds an MCP request at this size; without it the SDK applies
+      // its own 4 MiB default and refuses upload plans the server advertises.
+      maxRequestBodySize: maximumUploadPlanRequestBytes,
       // The SDK reads the body itself and, since 2.1.0, caps it at 4 MiB by
       // default. The route is already bounded by boundedMcpBody at this same
       // limit, which is also the limit advertised to MCP clients.

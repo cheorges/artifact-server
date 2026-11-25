@@ -306,6 +306,18 @@ describe("modern MCP HTTP", () => {
     expect(nearLimit.status).toBe(200);
     expect(await nearLimit.json()).toMatchObject({jsonrpc: "2.0"});
 
+    // The MCP SDK has its own body limit, 4 MiB by default. A request up to the advertised
+    // upload-plan limit must still reach the server.
+    const largeAllowed = await mcpRequest(
+      server,
+      installation.apiToken,
+      "tools/list",
+      {},
+      {},
+      5 * 1_024 * 1_024,
+    );
+    expect(largeAllowed.status).toBe(200);
+
     const officialClient = new Client(
       {name: "artifact-server-official-client-test", version: "1"},
       {versionNegotiation: {mode: {pin: protocolVersion}}},
@@ -1127,6 +1139,7 @@ async function mcpRequest(
   method: string,
   parameters: McpParameters,
   additionalHeaders: HeadersInit = {},
+  whitespacePaddingBytes = 0,
 ): Promise<Response> {
   const headers = new Headers(additionalHeaders);
   headers.set("Accept", "application/json, text/event-stream");
@@ -1147,7 +1160,7 @@ async function mcpRequest(
           [PROTOCOL_VERSION_META_KEY]: protocolVersion,
         },
       },
-    }),
+    }) + " ".repeat(whitespacePaddingBytes),
     headers,
     method: "POST",
   });
