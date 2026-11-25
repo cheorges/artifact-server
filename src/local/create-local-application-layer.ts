@@ -31,6 +31,7 @@ import {
   type ArtifactManagementDependencies,
   ArtifactManagementService,
 } from "../application/artifact-management.js";
+import type {ArtifactGrantLookup} from "../application/artifact-visibility-check.js";
 import { AuthorizationService } from "../application/authorization.js";
 import {
   type CompareArtifactDependencies,
@@ -87,6 +88,7 @@ import {
   CommentNotFound,
   CommentResolved,
   DispatchStateConflict,
+  GrantLimitReached,
   IdempotencyConflict,
   IdentityConflict,
   IdentityNotFound,
@@ -238,7 +240,15 @@ export function createApplicationLayer(
     now: Effect.sync(() => DateTime.makeUnsafe(adapters.clock.now())),
   };
   const publicLinks = adapters.publicLinks ?? publicLinkPolicies.on;
+  // One grant lookup for every service that decides restricted visibility.
+  const grants: ArtifactGrantLookup = {
+    isArtifactGrantee: (projectId, artifactId, principalId) => Effect.tryPromise({
+      try: () => adapters.repository.isArtifactGrantee(projectId, artifactId, principalId),
+      catch: (cause) => repositoryFailure("isArtifactGrantee", cause),
+    }),
+  };
   const publishDependencies: PublishArtifactDependencies = {
+    grants,
     blobs: {
       put: (write) =>
         Effect.tryPromise({
@@ -488,6 +498,7 @@ export function createApplicationLayer(
     },
   };
   const managementDependencies: ArtifactManagementDependencies = {
+    grants,
     clock,
     principalNames: {
       findDisplayNames: (installationId, principalIds) =>
@@ -504,6 +515,11 @@ export function createApplicationLayer(
         Effect.tryPromise({
           try: () => adapters.repository.changeAccessSetting(command),
           catch: classifyChangeAccessFailure,
+        }),
+      changeArtifactGrants: (command) =>
+        Effect.tryPromise({
+          try: () => adapters.repository.changeArtifactGrants(command),
+          catch: classifyChangeGrantsFailure,
         }),
       changeTags: (command) =>
         Effect.tryPromise({
@@ -550,6 +566,13 @@ export function createApplicationLayer(
           try: () => adapters.repository.listArtifactActions(command),
           catch: (cause) => repositoryFailure("listArtifactActions", cause),
         }),
+      listArtifactGrants: (projectId, artifactId) =>
+        Effect.tryPromise({
+          try: () => adapters.repository.listArtifactGrants(projectId, artifactId),
+          catch: (cause) => cause instanceof ArtifactNotFound
+            ? cause
+            : repositoryFailure("listArtifactGrants", cause),
+        }),
       listArtifacts: (command) =>
         Effect.tryPromise({
           try: () => adapters.repository.listArtifacts(command),
@@ -563,6 +586,7 @@ export function createApplicationLayer(
     },
   };
   const commentDependencies: ArtifactCommentDependencies = {
+    grants,
     clock,
     ids: adapters.ids,
     installationId: adapters.installationId,
@@ -693,6 +717,7 @@ export function createApplicationLayer(
       }),
   };
   const comparisonDependencies: CompareArtifactDependencies = {
+    grants,
     blobs: {
       readBytes: (entry) =>
         Effect.tryPromise({
@@ -708,6 +733,7 @@ export function createApplicationLayer(
   };
 
   const contentDependencies: ContentAccessDependencies = {
+    grants,
     clock,
     publicLinks,
     repository: {
@@ -1396,6 +1422,21 @@ function classifyChangeTagsFailure(cause: unknown):
     return cause;
   }
   return repositoryFailure("changeTags", cause);
+}
+
+function classifyChangeGrantsFailure(cause: unknown):
+  | ArtifactNotFound
+  | ArtifactMutationConflict
+  | GrantLimitReached
+  | ArtifactRepositoryFailure {
+  if (
+    cause instanceof ArtifactNotFound ||
+    cause instanceof ArtifactMutationConflict ||
+    cause instanceof GrantLimitReached
+  ) {
+    return cause;
+  }
+  return repositoryFailure("changeArtifactGrants", cause);
 }
 
 function classifyRestoreFailure(cause: unknown):

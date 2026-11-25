@@ -14,7 +14,10 @@ import {
   type ProjectManagementFailure,
   ProjectManagementService,
 } from "./project-management.js";
-import {requireArtifactVisible} from "../core/artifact-visibility.js";
+import {
+  type ArtifactGrantLookup,
+  requireVisibleWithGrants,
+} from "./artifact-visibility-check.js";
 import {
   ArtifactNotFound,
   type ArtifactRepositoryFailure,
@@ -214,6 +217,8 @@ export interface ArtifactCommentRepository {
 /** Dependencies used to construct comment operations. */
 export interface ArtifactCommentDependencies {
   readonly clock: ApplicationClock;
+  /** Grantees of a restricted artifact read and write its comments. */
+  readonly grants: ArtifactGrantLookup;
   readonly ids: IdGenerator;
   readonly installationId: string;
   readonly repository: ArtifactCommentRepository;
@@ -327,8 +332,9 @@ function makeArtifactCommentService(
       if (artifact === null) {
         return yield* new ArtifactNotFound({message: "The artifact does not exist."});
       }
-      // Comments follow the artifact: a restricted one hides its threads too.
-      yield* requireArtifactVisible(principal, artifact);
+      // Comments follow the artifact: a restricted one hides its threads from
+      // everyone but its owner, administrators and grantees.
+      yield* requireVisibleWithGrants(dependencies.grants, principal, artifact);
       return artifact;
     },
   );

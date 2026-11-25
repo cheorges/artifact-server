@@ -9,6 +9,10 @@ import {
 } from "./authorization.js";
 import { parseIdempotencyKey } from "./idempotency-key.js";
 import {
+  type ArtifactGrantLookup,
+  requireVisibleWithGrants,
+} from "./artifact-visibility-check.js";
+import {
   normalizeArtifactTag,
   parseArtifactTags,
 } from "./artifact-tags.js";
@@ -21,20 +25,24 @@ import {
   type ArtifactMutationConflict,
   type ArtifactRepositoryFailure,
   AuthorizationDenied,
+  type GrantLimitReached,
   type IdempotencyConflict,
   type IdentityRepositoryFailure,
+  InvalidArtifactGrant,
   type InvalidArtifactTags,
   type InvalidIdempotencyKey,
   InvalidPagination,
   VersionNotFound,
 } from "../core/errors.js";
+import type { ArtifactGrantList } from "../core/artifact-grants.js";
 import {
   mayChangeRestriction,
   isOwnerOrHumanAdministrator,
-  requireArtifactVisible,
+  requireRestrictedManagement,
   restrictedArtifactScope,
 } from "../core/artifact-visibility.js";
-import type { Principal } from "../core/identity.js";
+import { normalizeEmailAddress } from "../core/email-address.js";
+import { type Principal, principalKinds } from "../core/identity.js";
 import {
   isPubliclyReadable,
   type PublicLinkPolicy,
@@ -57,6 +65,7 @@ import {
 import type {
   ArtifactAccessSettingChange,
   ChangeArtifactAccessSetting,
+  ChangeArtifactGrants,
   ChangeArtifactTags,
   DeleteArtifact,
   ListArtifactActions,
@@ -102,8 +111,11 @@ export interface ArtifactActionPageWithActorNames {
   readonly nextCursor: PageCursor | null;
 }
 
-/** Which artifacts a list covers: every visible one, or only the caller's own. */
-export type ArtifactListScope = "all" | "mine";
+/**
+ * Which artifacts a list covers: every visible one, only the caller's own, or
+ * only restricted ones of others that are granted to the caller.
+ */
+export type ArtifactListScope = "all" | "mine" | "shared_with_me";
 
 /** One artifact and one exact saved version selected for a version-level action. */
 export interface ArtifactVersionDetails {
@@ -163,11 +175,22 @@ export interface ListArtifactsCommand {
   readonly limit: number;
   readonly principal: Principal;
   readonly projectId: string | null;
-  /** `mine` keeps only artifacts the caller owns; the default is `all`. */
+  /**
+   * `mine` keeps only artifacts the caller owns, `shared_with_me` only
+   * restricted artifacts of others granted to the caller; the default is `all`.
+   */
   readonly scope?: ArtifactListScope;
   readonly search: string | null;
   readonly sort?: "comments" | "newest";
   readonly tags: readonly string[];
+}
+
+/** Input for adding and removing people an artifact is shared with. */
+export interface ChangeArtifactGrantsCommand extends ReadArtifactCommand {
+  /** Email addresses to add, as typed; normalized before they are stored. */
+  readonly add: readonly string[];
+  /** Email addresses to remove, as typed; normalized before matching. */
+  readonly remove: readonly string[];
 }
 
 /** Input for listing one artifact's attributed mutation history. */
@@ -191,6 +214,15 @@ export interface ArtifactManagementRepository {
     | ArtifactMutationConflict
     | ArtifactNotFound
     | IdempotencyConflict
+    | ArtifactRepositoryFailure
+  >;
+  readonly changeArtifactGrants: (
+    command: ChangeArtifactGrants,
+  ) => Effect.Effect<
+    ArtifactGrantList,
+    | ArtifactMutationConflict
+    | ArtifactNotFound
+    | GrantLimitReached
     | ArtifactRepositoryFailure
   >;
   readonly changeTags: (
@@ -231,6 +263,10 @@ export interface ArtifactManagementRepository {
   readonly listArtifactActions: (
     command: ListArtifactActions,
   ) => Effect.Effect<ArtifactActionPage, ArtifactRepositoryFailure>;
+  readonly listArtifactGrants: (
+    projectId: string,
+    artifactId: string,
+  ) => Effect.Effect<ArtifactGrantList, ArtifactNotFound | ArtifactRepositoryFailure>;
   readonly listArtifacts: (
     command: ListArtifacts,
   ) => Effect.Effect<ArtifactPage, ArtifactRepositoryFailure>;
@@ -258,6 +294,8 @@ export interface PrincipalNameDirectory {
 /** Dependencies used to construct artifact management operations. */
 export interface ArtifactManagementDependencies {
   readonly clock: ApplicationClock;
+  /** Decides whether a member sees a restricted artifact through a grant. */
+  readonly grants: ArtifactGrantLookup;
   readonly principalNames: PrincipalNameDirectory;
   /** Installation switch that refuses new public links when off. */
   readonly publicLinks: PublicLinkPolicy;
@@ -272,8 +310,10 @@ export type ArtifactManagementFailure =
   | IdempotencyConflict
   | InvalidIdempotencyKey
   | InvalidArtifactTags
+  | InvalidArtifactGrant
   | InvalidPagination
   | AuthorizationDenied
+  | GrantLimitReached
   | ArtifactRepositoryFailure
   | ProjectManagementFailure;
 
@@ -281,6 +321,13 @@ interface ArtifactManagementOperations {
   readonly changeAccess: (
     command: ChangeArtifactAccessCommand,
   ) => Effect.Effect<ArtifactAccessChange, ArtifactManagementFailure>;
+  /**
+   * Add and remove people an artifact is shared with, for its owner or an
+   * administrator, and answer the resulting list.
+   */
+  readonly changeGrants: (
+    command: ChangeArtifactGrantsCommand,
+  ) => Effect.Effect<ArtifactGrantList, ArtifactManagementFailure>;
   readonly changeTags: (
     command: ChangeArtifactTagsCommand,
   ) => Effect.Effect<ArtifactState, ArtifactManagementFailure>;
@@ -294,6 +341,10 @@ interface ArtifactManagementOperations {
   readonly getArtifactWithOwnerName: (
     command: ReadArtifactCommand,
   ) => Effect.Effect<ArtifactDetailsWithOwnerName, ArtifactManagementFailure>;
+  /** The people an artifact is shared with, for its owner or an administrator. */
+  readonly getGrants: (
+    command: ReadArtifactCommand,
+  ) => Effect.Effect<ArtifactGrantList, ArtifactManagementFailure>;
   readonly getVersion: (
     command: ReadArtifactVersionCommand,
   ) => Effect.Effect<ArtifactVersion, ArtifactManagementFailure>;
@@ -445,7 +496,7 @@ function makeArtifactManagementService(
         command.projectId,
       );
       const artifact = yield* requireArtifact(project.id, command.artifactId);
-      yield* requireArtifactVisible(command.principal, artifact);
+      yield* requireVisibleWithGrants(dependencies.grants, command.principal, artifact);
       yield* authorization.requireArtifactRead(command.principal);
       const current = yield* requireVersion(
         project.id,
@@ -484,7 +535,7 @@ function makeArtifactManagementService(
       if (artifact === null) {
         return yield* new ArtifactNotFound({message: "The artifact does not exist."});
       }
-      yield* requireArtifactVisible(command.principal, artifact);
+      yield* requireVisibleWithGrants(dependencies.grants, command.principal, artifact);
       yield* authorization.requireArtifactRead(command.principal);
       if (version === null) {
         return yield* new VersionNotFound({
@@ -521,7 +572,7 @@ function makeArtifactManagementService(
       if (artifact === null) {
         return yield* new ArtifactNotFound({message: "The artifact does not exist."});
       }
-      yield* requireArtifactVisible(command.principal, artifact);
+      yield* requireVisibleWithGrants(dependencies.grants, command.principal, artifact);
       yield* authorization.requireArtifactRead(command.principal);
       return versions;
     },
@@ -549,7 +600,11 @@ function makeArtifactManagementService(
         cursor: command.cursor,
         limit,
         ownerPrincipalId: command.scope === "mine" ? command.principal.id : null,
-        sharedWithPrincipalId: null,
+        // Only members are granted, so a service principal shares nothing.
+        sharedWithPrincipalId: command.scope === "shared_with_me" &&
+            command.principal.kind === principalKinds.human
+          ? command.principal.id
+          : null,
         projectId: project.id,
         restrictedScope: restrictedArtifactScope(command.principal),
         search,
@@ -588,7 +643,7 @@ function makeArtifactManagementService(
       project.id,
       command.artifactId,
     );
-    yield* requireArtifactVisible(command.principal, artifact);
+    yield* requireVisibleWithGrants(dependencies.grants, command.principal, artifact);
     yield* authorization.requireArtifactManagement(command.principal);
     const page = yield* dependencies.repository.listArtifactActions({
       artifactId: artifact.id,
@@ -609,6 +664,57 @@ function makeArtifactManagementService(
     };
   });
 
+  // Who sees an artifact is the owner's or an administrator's decision; anyone
+  // else who can see it gets the same refusal as for its access setting.
+  const requireGrantManagement = Effect.fn(
+    "ArtifactManagementService.requireGrantManagement",
+  )(function*(command: ReadArtifactCommand) {
+    const project = yield* resolveProjectForRead(
+      command.principal,
+      command.projectId,
+    );
+    const artifact = yield* requireArtifact(project.id, command.artifactId);
+    yield* requireVisibleWithGrants(dependencies.grants, command.principal, artifact);
+    if (!mayChangeRestriction(command.principal, artifact)) {
+      return yield* new AuthorizationDenied({
+        message: "Only the owner or an administrator can change who sees this artifact.",
+      });
+    }
+    return artifact;
+  });
+
+  const getGrants = Effect.fn("ArtifactManagementService.getGrants")(
+    function*(command: ReadArtifactCommand) {
+      const artifact = yield* requireGrantManagement(command);
+      return yield* dependencies.repository.listArtifactGrants(
+        artifact.projectId,
+        artifact.id,
+      );
+    },
+  );
+
+  const changeGrants = Effect.fn("ArtifactManagementService.changeGrants")(
+    function*(command: ChangeArtifactGrantsCommand) {
+      const artifact = yield* requireGrantManagement(command);
+      const add = yield* normalizeGrantees(command.add);
+      const remove = yield* normalizeGrantees(command.remove);
+      if (add.some((email) => remove.includes(email))) {
+        return yield* new InvalidArtifactGrant({
+          message: "An address cannot be added and removed in the same change.",
+        });
+      }
+      const changedAt = DateTime.formatIso(yield* dependencies.clock.now);
+      return yield* dependencies.repository.changeArtifactGrants({
+        add,
+        artifactId: artifact.id,
+        changedAt,
+        principalId: command.principal.id,
+        projectId: artifact.projectId,
+        remove,
+      });
+    },
+  );
+
   const restoreVersion = Effect.fn("ArtifactManagementService.restoreVersion")(
     function*(command: RestoreArtifactVersionCommand) {
       const project = yield* resolveProjectForRead(
@@ -616,7 +722,9 @@ function makeArtifactManagementService(
         command.projectId,
       );
       const artifact = yield* requireArtifact(project.id, command.artifactId);
-      yield* requireArtifactVisible(command.principal, artifact);
+      yield* requireVisibleWithGrants(dependencies.grants, command.principal, artifact);
+      // A grantee sees a restricted artifact but never manages it.
+      yield* requireRestrictedManagement(command.principal, artifact);
       yield* authorization.requireArtifactManagement(command.principal);
       yield* requireVersion(project.id, artifact.id, command.versionId);
       const idempotencyKey = yield* parseIdempotencyKey(command.idempotencyKey);
@@ -649,7 +757,8 @@ function makeArtifactManagementService(
         command.projectId,
       );
       const artifact = yield* requireArtifact(project.id, command.artifactId);
-      yield* requireArtifactVisible(command.principal, artifact);
+      yield* requireVisibleWithGrants(dependencies.grants, command.principal, artifact);
+      yield* requireRestrictedManagement(command.principal, artifact);
       yield* authorization.requireArtifactManagement(command.principal);
       // Only the owner or an administrator moves an artifact to or from restricted.
       if (
@@ -704,7 +813,8 @@ function makeArtifactManagementService(
         command.projectId,
       );
       const artifact = yield* requireArtifact(project.id, command.artifactId);
-      yield* requireArtifactVisible(command.principal, artifact);
+      yield* requireVisibleWithGrants(dependencies.grants, command.principal, artifact);
+      yield* requireRestrictedManagement(command.principal, artifact);
       yield* authorization.requireArtifactManagement(command.principal);
       const idempotencyKey = yield* parseIdempotencyKey(command.idempotencyKey);
       const tags = yield* parseArtifactTags(command.tags);
@@ -740,7 +850,8 @@ function makeArtifactManagementService(
         project.id,
         command.artifactId,
       );
-      yield* requireArtifactVisible(command.principal, artifact);
+      yield* requireVisibleWithGrants(dependencies.grants, command.principal, artifact);
+      yield* requireRestrictedManagement(command.principal, artifact);
       yield* authorization.requireArtifactManagement(command.principal);
       // A delete cannot be undone, so it stays with the owner and administrators.
       if (!isOwnerOrHumanAdministrator(command.principal, artifact)) {
@@ -772,10 +883,12 @@ function makeArtifactManagementService(
 
   return ArtifactManagementService.of({
     changeAccess,
+    changeGrants,
     changeTags,
     deleteArtifact,
     getArtifact,
     getArtifactWithOwnerName,
+    getGrants,
     getVersion,
     getVersionDetails,
     listArtifactActions,
@@ -785,6 +898,23 @@ function makeArtifactManagementService(
     restoreVersion,
   });
 }
+
+/** Normalize grant addresses, dropping repeats; fail on the first malformed one. */
+const normalizeGrantees = Effect.fn("ArtifactManagementService.normalizeGrantees")(
+  function*(values: readonly string[]) {
+    const normalized = new Set<string>();
+    for (const value of values) {
+      const email = normalizeEmailAddress(value);
+      if (email === null) {
+        return yield* new InvalidArtifactGrant({
+          message: `"${value.trim().slice(0, 80)}" is not a valid email address.`,
+        });
+      }
+      normalized.add(email);
+    }
+    return [...normalized];
+  },
+);
 
 interface ManagementInputDigest {
   readonly artifactId: string;

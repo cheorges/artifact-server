@@ -4,8 +4,12 @@ import { Context, DateTime, Effect, Layer, Schema } from "effect";
 
 import {
   mayChangeRestriction,
-  requireArtifactVisible,
+  requireRestrictedManagement,
 } from "../core/artifact-visibility.js";
+import {
+  type ArtifactGrantLookup,
+  requireVisibleWithGrants,
+} from "./artifact-visibility-check.js";
 import {
   ArtifactNotFound,
   type ArtifactRepositoryFailure,
@@ -137,6 +141,8 @@ export interface PublishBlobStorage {
 export interface PublishArtifactDependencies {
   readonly blobs: PublishBlobStorage;
   readonly clock: ApplicationClock;
+  /** Lets a grantee reach the refusal rather than a missing artifact. */
+  readonly grants: ArtifactGrantLookup;
   readonly ids: IdGenerator;
   /** Installation switch that refuses new public links when off. */
   readonly publicLinks: PublicLinkPolicy;
@@ -313,7 +319,9 @@ function makePublishArtifactService(
         new ArtifactNotFound({message: "The artifact does not exist."}),
       );
     }
-    yield* requireArtifactVisible(command.principal, current.artifact);
+    yield* requireVisibleWithGrants(dependencies.grants, command.principal, current.artifact);
+    // A grantee sees a restricted artifact but never publishes to it.
+    yield* requireRestrictedManagement(command.principal, current.artifact);
     yield* authorization.requireVersionPublication(
       command.principal,
     );

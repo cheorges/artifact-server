@@ -252,6 +252,12 @@ const changeAccessSchema = z.object({
   accessSetting: accessSettingSchema,
   expectedCurrentVersionId: z.string().min(1).max(200),
 });
+/** At most as many addresses per side as one artifact can hold grants. */
+const grantAddressesSchema = z.array(z.string().max(320)).max(100).default([]);
+const changeGrantsSchema = z.object({
+  add: grantAddressesSchema,
+  remove: grantAddressesSchema,
+}).strict();
 const changeTagsSchema = z.object({
   expectedCurrentVersionId: z.string().min(1).max(200),
   tags: artifactTagsSchema,
@@ -381,7 +387,7 @@ const pageQuerySchema = z.object({
 });
 const artifactPageQuerySchema = pageQuerySchema.extend({
   comments: z.enum(["all", "with", "without"]).default("all"),
-  scope: z.enum(["all", "mine"]).default("all"),
+  scope: z.enum(["all", "mine", "shared_with_me"]).default("all"),
   sort: z.enum(["comments", "newest"]).default("newest"),
   tags: z.array(z.string().max(200)).max(20).default([]),
 });
@@ -2136,6 +2142,43 @@ export function createHttpApp(
           ? "New public requests are blocked. Copies already downloaded or cached outside Artifact Server cannot be recalled."
           : null,
       });
+    },
+  );
+
+  app.get("/api/v1/artifacts/:artifactId/grants", async (context) => {
+    const grants = await runHttpApplicationEffect(
+      context,
+      dependencies,
+      ArtifactManagementService.use((management) =>
+        management.getGrants({
+          artifactId: context.req.param("artifactId"),
+          principal: context.get("principal"),
+          projectId: requestedProjectId(context),
+        })
+      ),
+    );
+    return context.json(grants);
+  });
+
+  app.patch(
+    "/api/v1/artifacts/:artifactId/grants",
+    boundedJsonBody,
+    async (context) => {
+      const body = changeGrantsSchema.parse(await context.req.json());
+      const grants = await runHttpApplicationEffect(
+        context,
+        dependencies,
+        ArtifactManagementService.use((management) =>
+          management.changeGrants({
+            add: body.add,
+            artifactId: context.req.param("artifactId"),
+            principal: context.get("principal"),
+            projectId: requestedProjectId(context),
+            remove: body.remove,
+          })
+        ),
+      );
+      return context.json(grants);
     },
   );
 

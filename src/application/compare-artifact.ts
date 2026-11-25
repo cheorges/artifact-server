@@ -8,7 +8,10 @@ import {
   type ProjectManagementFailure,
   ProjectManagementService,
 } from "./project-management.js";
-import {requireArtifactVisible} from "../core/artifact-visibility.js";
+import {
+  type ArtifactGrantLookup,
+  requireVisibleWithGrants,
+} from "./artifact-visibility-check.js";
 import {
   ArtifactNotFound,
   type ArtifactRepositoryFailure,
@@ -101,6 +104,7 @@ export interface ComparisonBlobStorage {
 /** Dependencies used to construct comparison operations. */
 export interface CompareArtifactDependencies {
   readonly blobs: ComparisonBlobStorage;
+  readonly grants: ArtifactGrantLookup;
   readonly repository: CompareArtifactRepository;
 }
 
@@ -216,7 +220,7 @@ function makeCompareArtifactService(
           message: "The artifact does not exist.",
         });
       }
-      yield* requireArtifactVisible(command.principal, artifact);
+      yield* requireVisibleWithGrants(dependencies.grants, command.principal, artifact);
       yield* authorization.requireArtifactRead(command.principal);
       const [from, to] = yield* Effect.all([
         requireVersion(project.id, artifact.id, command.fromVersionId),

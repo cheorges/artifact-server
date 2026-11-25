@@ -6,7 +6,10 @@ import {
   Redacted,
 } from "effect";
 
-import {requireArtifactVisible} from "../core/artifact-visibility.js";
+import {
+  type ArtifactGrantLookup,
+  requireVisibleWithGrants,
+} from "./artifact-visibility-check.js";
 import {
   ArtifactNotFound,
   type ArtifactRepositoryFailure,
@@ -106,6 +109,7 @@ export type VersionContentFallback = "entry" | "none";
 /** Dependencies used to construct private and public content access. */
 export interface ContentAccessDependencies {
   readonly clock: ApplicationClock;
+  readonly grants: ArtifactGrantLookup;
   /** Installation switch; when off, public links need a session like any other. */
   readonly publicLinks: PublicLinkPolicy;
   readonly repository: ContentAccessRepository;
@@ -275,7 +279,7 @@ function makeContentAccessService(
         new ArtifactNotFound({message: "The artifact does not exist."}),
       );
     }
-    yield* requireArtifactVisible(command.principal, current.artifact);
+    yield* requireVisibleWithGrants(dependencies.grants, command.principal, current.artifact);
     yield* authorization.requireContentSession(
       command.principal,
       current.artifact,

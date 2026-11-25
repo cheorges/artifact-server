@@ -2254,7 +2254,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       }),
     ]);
     const owner = managedTestPrincipal(ownerIdentity.apiToken).principalId;
-    const {installationId} = ownerIdentity;
+    const grantInstallationId = ownerIdentity.installationId;
     const projectId = granted.body.artifact.projectId;
     const changedAt = "2026-11-10T00:00:00.000Z";
     const anna = "anna@example.test";
@@ -2263,7 +2263,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       url: Redacted.make(environment.databaseUrl),
     }, "validate");
     try {
-      const identities = new PostgresIdentityRepository(database, installationId);
+      const identities = new PostgresIdentityRepository(database, grantInstallationId);
       await Promise.all([
         ["member_anna", anna, "member"],
         ["member_ben", "ben@example.test", "member"],
@@ -2273,10 +2273,10 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
         displayName: String(id),
         email: String(email),
         id: String(id),
-        installationId,
+        installationId: grantInstallationId,
         role: role === "administrator" ? "administrator" : "member",
       })));
-      const repository = await PostgresArtifactRepository.open(database, installationId);
+      const repository = await PostgresArtifactRepository.open(database, grantInstallationId);
       await repository.changeAccessSetting({
         accessSetting: "restricted",
         artifactId: granted.body.artifact.id,
@@ -2345,7 +2345,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
                (installation_id, token_digest, principal_id, project_id, artifact_id, version_id,
                 content_token, created_at, expires_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '2999-01-01T00:00:00.000Z')`,
-            [installationId, `${table}-${principalId}`, principalId, projectId, switched.body.artifact.id,
+            [grantInstallationId, `${table}-${principalId}`, principalId, projectId, switched.body.artifact.id,
               switched.body.version.id, `token-${principalId}`, changedAt],
           ), {discard: true}), {discard: true});
       }));
@@ -2360,7 +2360,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
              WHERE installation_id = $1 AND artifact_id = $2
            ) AS holders
            ORDER BY "principalId" COLLATE "C"`,
-          [installationId, switched.body.artifact.id],
+          [grantInstallationId, switched.body.artifact.id],
         );
         return z.array(z.object({principalId: z.string()})).parse(rows).map(({principalId}) => principalId);
       }));
@@ -2380,7 +2380,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       await change(switched.body.artifact.id, [], [anna]);
       expect(await holders()).toStrictEqual(kept.filter((principalId) => principalId !== "member_anna"));
 
-      await identities.deactivateMember(installationId, "member_anna", changedAt);
+      await identities.deactivateMember(grantInstallationId, "member_anna", changedAt);
       expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna")).toBe(false);
       expect(await listedFor({kind: "owned_or_granted", principalId: "member_anna"})).toStrictEqual([]);
     } finally {
