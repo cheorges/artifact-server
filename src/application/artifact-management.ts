@@ -41,7 +41,7 @@ import {
   requireRestrictedManagement,
   restrictedArtifactScope,
 } from "../core/artifact-visibility.js";
-import { normalizeEmailAddress } from "../core/email-address.js";
+import { parseEmailAddress } from "../core/email-address.js";
 import { type Principal, principalKinds } from "../core/identity.js";
 import {
   isPubliclyReadable,
@@ -710,8 +710,8 @@ function makeArtifactManagementService(
   const changeGrants = Effect.fn("ArtifactManagementService.changeGrants")(
     function*(command: ChangeArtifactGrantsCommand) {
       const artifact = yield* requireGrantManagement(command);
-      const add = yield* normalizeGrantees(command.add);
-      const remove = yield* normalizeGrantees(command.remove);
+      const add = yield* parseGrantees(command.add);
+      const remove = yield* parseGrantees(command.remove);
       if (add.some((email) => remove.includes(email))) {
         return yield* new InvalidArtifactGrant({
           message: "An address cannot be added and removed in the same change.",
@@ -914,12 +914,12 @@ function makeArtifactManagementService(
   });
 }
 
-/** Normalize grant addresses, dropping repeats; fail on the first malformed one. */
-const normalizeGrantees = Effect.fn("ArtifactManagementService.normalizeGrantees")(
+/** Parse grant addresses into their stored form, dropping repeats; fail on the first malformed one. */
+const parseGrantees = Effect.fn("ArtifactManagementService.parseGrantees")(
   function*(values: readonly string[]) {
     const normalized = new Set<string>();
     for (const value of values) {
-      const email = normalizeEmailAddress(value);
+      const email = parseEmailAddress(value);
       if (email === null) {
         return yield* new InvalidArtifactGrant({
           message: `"${value.trim().slice(0, 80)}" is not a valid email address.`,

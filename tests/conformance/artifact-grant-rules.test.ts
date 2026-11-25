@@ -8,7 +8,7 @@ import {
   restrictedArtifactScope,
   restrictedDispatchScope,
 } from "../../src/core/artifact-visibility.js";
-import {normalizeEmailAddress} from "../../src/core/email-address.js";
+import {parseEmailAddress} from "../../src/core/email-address.js";
 import {
   membershipRoles,
   principalKinds,
@@ -37,7 +37,7 @@ const restricted = {accessSetting: accessSettings.restricted, ownerPrincipalId: 
 const members = {accessSetting: accessSettings.accountRequired, ownerPrincipalId: owner.id};
 
 describe("grant-aware visibility", () => {
-  test("a matching grant makes a restricted artifact visible, nothing else changes", () => {
+  test("AUTH-037 foundation: a matching grant makes a restricted artifact visible, nothing else changes", () => {
     expect(canSeeArtifact(grantee, restricted, true)).toBe(true);
     expect(canSeeArtifact(grantee, restricted, false)).toBe(false);
     expect(canSeeArtifact(service, restricted, true)).toBe(false);
@@ -46,7 +46,7 @@ describe("grant-aware visibility", () => {
     expect(canSeeArtifact(grantee, members, false)).toBe(true);
   });
 
-  test("only humans who are neither owner nor administrator need a grant lookup", () => {
+  test("AUTH-037 foundation: only humans who are neither owner nor administrator need a grant lookup", () => {
     expect(needsGrantLookup(grantee, restricted)).toBe(true);
     expect(needsGrantLookup(owner, restricted)).toBe(false);
     expect(needsGrantLookup(administrator, restricted)).toBe(false);
@@ -54,14 +54,14 @@ describe("grant-aware visibility", () => {
     expect(needsGrantLookup(service, restricted)).toBe(false);
   });
 
-  test("management of a restricted artifact stays with owner and administrators", () => {
+  test("AUTH-037 foundation: management of a restricted artifact stays with owner and administrators", () => {
     expect(Exit.isSuccess(Effect.runSyncExit(requireRestrictedManagement(owner, restricted)))).toBe(true);
     expect(Exit.isSuccess(Effect.runSyncExit(requireRestrictedManagement(administrator, restricted)))).toBe(true);
     expect(Exit.isFailure(Effect.runSyncExit(requireRestrictedManagement(grantee, restricted)))).toBe(true);
     expect(Exit.isSuccess(Effect.runSyncExit(requireRestrictedManagement(grantee, members)))).toBe(true);
   });
 
-  test("listing includes grants, dispatch does not", () => {
+  test("AUTH-037 foundation: listing includes grants, dispatch does not", () => {
     expect(restrictedArtifactScope(grantee)).toStrictEqual({kind: "owned_or_granted", principalId: grantee.id});
     expect(restrictedDispatchScope(grantee)).toStrictEqual({kind: "owned", principalId: grantee.id});
     expect(restrictedArtifactScope(administrator)).toStrictEqual({kind: "all"});
@@ -71,15 +71,15 @@ describe("grant-aware visibility", () => {
   });
 });
 
-describe("normalizeEmailAddress", () => {
+describe("parseEmailAddress", () => {
   test.each([
     [" Anna.Muster@Company.Example ", "anna.muster@company.example"],
     ["a@b", "a@b"],
-  ])("normalizes %j", (input, expected) => {
-    expect(normalizeEmailAddress(input)).toBe(expected);
+  ])("AUTH-038 foundation: parses %j into its stored form", (input, expected) => {
+    expect(parseEmailAddress(input)).toBe(expected);
   });
 
-  test.each(["", "ab", "no-at-sign", `${"x".repeat(320)}@y`])("refuses %j", (input) => {
-    expect(normalizeEmailAddress(input)).toBeNull();
+  test.each(["", "ab", "no-at-sign", `${"x".repeat(320)}@y`])("AUTH-038 foundation: refuses %j", (input) => {
+    expect(parseEmailAddress(input)).toBeNull();
   });
 });

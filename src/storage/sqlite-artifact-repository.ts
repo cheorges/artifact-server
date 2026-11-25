@@ -1676,7 +1676,7 @@ export class SqliteArtifactRepository implements
 
   listArtifactGrants(projectId: string, artifactId: string): Promise<ArtifactGrantList> {
     return Promise.resolve().then(() => ({
-      active: this.#readRestrictedFlag(projectId, artifactId),
+      active: this.#requireLiveRestrictedFlag(projectId, artifactId),
       grants: this.#grantRows(artifactId),
     }));
   }
@@ -1704,7 +1704,7 @@ export class SqliteArtifactRepository implements
   changeArtifactGrants(command: ChangeArtifactGrants): Promise<ArtifactGrantList> {
     return Promise.resolve().then(() =>
       this.#transaction(() => {
-        const restricted = this.#readRestrictedFlag(command.projectId, command.artifactId);
+        const restricted = this.#requireLiveRestrictedFlag(command.projectId, command.artifactId);
         const insert = this.#database.prepare(
           `INSERT INTO artifact_grants
              (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
@@ -5120,7 +5120,7 @@ export class SqliteArtifactRepository implements
   }
 
   /** Whether a live artifact is restricted; fails like a missing artifact otherwise. */
-  #readRestrictedFlag(projectId: string, artifactId: string): boolean {
+  #requireLiveRestrictedFlag(projectId: string, artifactId: string): boolean {
     const row = restrictedFlagRowSchema.nullable().parse(
       this.#database
         .prepare(

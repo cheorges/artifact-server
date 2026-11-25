@@ -1486,7 +1486,7 @@ export class PostgresArtifactRepository implements
 
   async listArtifactGrants(projectId: string, artifactId: string): Promise<ArtifactGrantList> {
     return this.#database.run(Effect.gen({self: this}, function*() {
-      const active = yield* this.#readRestrictedFlag(projectId, artifactId, false);
+      const active = yield* this.#requireLiveRestrictedFlag(projectId, artifactId);
       return {active, grants: yield* this.#readGrants(artifactId)};
     }));
   }
@@ -1524,7 +1524,7 @@ export class PostgresArtifactRepository implements
       const sql = yield* SqlClient;
       return yield* sql.withTransaction(Effect.gen({self: this}, function*() {
         // The row lock serializes grant changes on one artifact, so the cap holds.
-        const active = yield* this.#readRestrictedFlag(command.projectId, command.artifactId, true);
+        const active = yield* this.#lockLiveRestrictedFlag(command.projectId, command.artifactId);
         yield* Effect.forEach(command.add, (email) => sql.unsafe(
           `INSERT INTO artifact_grants
              (installation_id, artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
@@ -1685,14 +1685,27 @@ export class PostgresArtifactRepository implements
   }
 
   /** Whether a live artifact is restricted; fails like a missing artifact otherwise. */
-  #readRestrictedFlag(projectId: string, artifactId: string, lock: boolean) {
+  #requireLiveRestrictedFlag(projectId: string, artifactId: string) {
+    return this.#selectLiveRestrictedFlag(projectId, artifactId, "");
+  }
+
+  /**
+   * Like {@link #requireLiveRestrictedFlag}, and lock the artifact row until the
+   * transaction ends, so concurrent grant changes count against the cap in turn.
+   */
+  #lockLiveRestrictedFlag(projectId: string, artifactId: string) {
+    return this.#selectLiveRestrictedFlag(projectId, artifactId, "FOR UPDATE");
+  }
+
+  /** The query behind {@link #requireLiveRestrictedFlag} and {@link #lockLiveRestrictedFlag}. */
+  #selectLiveRestrictedFlag(projectId: string, artifactId: string, locking: "" | "FOR UPDATE") {
     const installationId = this.#installationId;
     return Effect.gen(function*() {
       const sql = yield* SqlClient;
       const rows = yield* sql.unsafe<object>(
         `SELECT restricted FROM artifacts
          WHERE installation_id = $1 AND project_id = $2 AND id = $3 AND deleted_at IS NULL
-         ${lock ? "FOR UPDATE" : ""}`,
+         ${locking}`,
         [installationId, projectId, artifactId],
       );
       const row = z.object({restricted: z.boolean()}).nullable().parse(rows[0] ?? null);

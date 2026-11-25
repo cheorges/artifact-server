@@ -514,8 +514,10 @@ function makeArtifactCommentService(
     artifact: ArtifactRecord,
   ): Effect.fn.Return<CommentAuthor, AuthorizationDenied> {
     if (principal.id === author.principalId) return author;
-    // People a restricted artifact is shared with comment on it, but only its
-    // owner and administrators remove anyone else's comments (AUTH-037).
+    // Removing someone else's comment takes an administrator or the
+    // manage-any capability. On a restricted artifact that principal must also
+    // own or administer it, so a grantee's key with that capability cannot
+    // (AUTH-037). An owner who is neither cannot either, as on other settings.
     if (
       (isHumanAdministrator(principal) ||
         hasCapability(principal, principalCapabilities.manageAnyArtifact)) &&
