@@ -566,7 +566,9 @@ function ArtifactReview({
   const [focusControlsHoverArmed, setFocusControlsHoverArmed] = useState(true);
   const [focusControlsInstant, setFocusControlsInstant] = useState(false);
   const [markdownSourceViewActive, setMarkdownSourceViewActive] = useState(false);
-  const [htmlAnnotateModeActive, setHtmlAnnotateModeActive] = useState(true);
+  const [htmlAnnotateModeActive, setHtmlAnnotateModeActive] = useState(
+    readInitialHtmlAnnotateMode,
+  );
   const [homeOpen, setHomeOpen] = useState(false);
   const focusCommentsButtonRef = useRef<HTMLButtonElement>(null);
   const focusControlsRestoreRef = useRef<HTMLButtonElement>(null);
@@ -608,6 +610,13 @@ function ArtifactReview({
     catalogWidthApplyRef.current = (width) => catalogMotion.width.set(width);
     inspectorWidthApplyRef.current = (width) => inspectorMotion.width.set(width);
   }, [catalogMotion.width, inspectorMotion.width]);
+  useEffect(() => {
+    if (htmlAnnotateModeActive) {
+      window.localStorage.removeItem("artifact-review-html-mode");
+    } else {
+      window.localStorage.setItem("artifact-review-html-mode", "interact");
+    }
+  }, [htmlAnnotateModeActive]);
   const followCommentVersion = useCallback((versionId: string): void => {
     setDetailError(null);
     setSelectedVersionId(versionId);
@@ -2747,6 +2756,10 @@ function readInitialTheme(): ReviewTheme {
   return window.localStorage.getItem("artifact-review-theme") === "dawn"
     ? "dawn"
     : "moon";
+}
+
+function readInitialHtmlAnnotateMode(): boolean {
+  return window.localStorage.getItem("artifact-review-html-mode") !== "interact";
 }
 
 function readInitialInspectorOpen(): boolean {
