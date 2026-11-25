@@ -1893,7 +1893,7 @@ requirements:
       failure: {id: AUTH-040-F, description: "Group members never manage the artifact; nobody but the owner and administrators receives its groups or their activity rows; a failed lookup gives not found while person grants keep working and is not remembered; a person who left a group loses access once the remembered membership expires and a removed group ends content sessions at once; repeated adds and removals of absent groups write no row; a wrong name, an unknown group, an unreachable directory, and an installation without a directory each refuse the change with nothing written; a group missing from the directory gives no access and can still be removed."}
     deployments: *all
     status: implementing
-    proof_gap: Tests land in Tasks 2 to 7 of the group grants plan.
+    proof_gap: AUTH-040-B and AUTH-040-F run against the local SQLite server through HTTP and MCP with an in-memory directory, including a failed lookup, a left group, a removed group, and an installation without a directory; SQLite storage tests prove the schema 17 upgrade, group matching in visibility and listing, the shared cap, one row per real change, and revocation on removal; a Postgres runtime test covers migration 16, concurrent adds, the cap, and revocation; a D1 runtime test covers the revision 14 rebuild and the Worker's refusal; adapter tests prove the Microsoft Graph queries, paging, and failure handling against a loopback stand-in; and a browser test proves the Share dialog's Groups field in Chromium. Nothing ran against the real Microsoft Graph, so that the directory accepts the per-member call with GroupMember.Read.All alone is unproven until the consent is granted, and the D1 group match is the shared SQL proven on SQLite because the Worker has no directory. No deployment-specific evidence is recorded.
     depends_on: [AUTH-037, AUTH-038, AUTH-039]
     evidence: []
 
@@ -1907,7 +1907,7 @@ requirements:
       failure: {id: AUTH-041-F, description: "Service principals and anonymous callers are refused; queries shorter than 2 or longer than 64 characters are refused; the answer carries no member data; query text reaches the directory as a literal and cannot change the directory query; groups with hidden membership are not offered."}
     deployments: *all
     status: implementing
-    proof_gap: Tests land in Tasks 2 to 7 of the group grants plan.
+    proof_gap: AUTH-041-B and AUTH-041-F run against the local SQLite server through HTTP and MCP with an in-memory directory; adapter tests prove the literal search and filter queries, the escaping of hostile text, and the dropping of hidden-membership groups against a loopback stand-in; configuration tests prove the directory is off by default and refused without Entra sign-in by object id; and a stack test proves the AWS switch. Nothing ran against the real Microsoft Graph. No deployment-specific evidence is recorded.
     depends_on: [AUTH-040]
     evidence: []
 
