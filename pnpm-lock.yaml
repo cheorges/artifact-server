@@ -216,8 +216,8 @@ importers:
         specifier: 2.1.1
         version: 2.1.1
       dompurify:
-        specifier: 3.4.13
-        version: 3.4.13
+        specifier: 3.4.17
+        version: 3.4.17
       marked:
         specifier: 17.0.6
         version: 17.0.6

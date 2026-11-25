@@ -19,7 +19,7 @@
     "@plannotator/ui": "0.31.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "dompurify": "3.4.13",
+    "dompurify": "3.4.17",
     "marked": "17.0.6",
     "mermaid": "11.16.1",
     "motion": "12.43.0",
