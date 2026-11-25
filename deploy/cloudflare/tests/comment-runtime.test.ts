@@ -634,6 +634,18 @@ describe("Cloudflare D1 comments", () => {
       expect(shared.artifacts.map(({artifact}) => artifact.id)).toStrictEqual([target.artifact.id]);
       expect((await as(ben, `${artifactUrl}/grants`)).status).toBe(403);
 
+      // One change of several addresses records one row per new address, each
+      // with its own id, and none for the address already granted.
+      expect((await changeGrants(ada, {
+        add: ["ben@example.test", "cara@example.test", "erin@example.test"],
+      })).status).toBe(200);
+      const threeAdded = [
+        sharingRow("grant_add", "ben@example.test"),
+        sharingRow("grant_add", "cara@example.test"),
+        sharingRow("grant_add", "erin@example.test"),
+      ];
+      expect(sharingRows()).toStrictEqual(threeAdded);
+
       // One change above the cap fails as a whole and changes nothing.
       const tooMany = await changeGrants(ada, {
         add: Array.from({length: 100}, (_, index) => `person${index}@example.test`),
@@ -641,8 +653,8 @@ describe("Cloudflare D1 comments", () => {
       expect(tooMany.status).toBe(409);
       expect(failureSchema.parse(await tooMany.json()).error.code).toBe("GRANT_LIMIT_REACHED");
       expect(grantSchema.parse(await (await as(ada, `${artifactUrl}/grants`)).json()).grants
-        .map(({grantee}) => grantee)).toStrictEqual(["ben@example.test"]);
-      expect(sharingRows()).toStrictEqual([sharingRow("grant_add", "ben@example.test")]);
+        .map(({grantee}) => grantee)).toStrictEqual(["ben@example.test", "cara@example.test", "erin@example.test"]);
+      expect(sharingRows()).toStrictEqual(threeAdded);
 
       const openContentAccess = (member: MemberKey): number => {
         const reader = new DatabaseSync(d1File, {readOnly: true});
@@ -666,11 +678,11 @@ describe("Cloudflare D1 comments", () => {
       expect(openContentAccess(ada)).toBeGreaterThan(0);
       // Ada's own address was never granted, so only Ben's removal is recorded.
       expect(sharingRows()).toStrictEqual([
-        sharingRow("grant_add", "ben@example.test"),
+        ...threeAdded,
         sharingRow("grant_remove", "ben@example.test"),
       ]);
 
-      // Only the owner lists the sharing rows; a grantee pages past them.
+      // Only the owner lists the sharing rows; a grantee lists none of them.
       expect((await changeGrants(ada, {add: ["ben@example.test"]})).status).toBe(200);
       const activitySchema = z.object({
         actions: z.array(z.object({action: z.string(), grantee: z.string().nullable()})),
@@ -680,7 +692,8 @@ describe("Cloudflare D1 comments", () => {
           .filter(({grantee}) => grantee !== null)
           .map(({action}) => action)
           .toSorted();
-      expect(await activityOf(ada)).toStrictEqual(["grant_add", "grant_add", "grant_remove"]);
+      expect(await activityOf(ada))
+        .toStrictEqual(["grant_add", "grant_add", "grant_add", "grant_add", "grant_remove"]);
       expect(await activityOf(ben)).toStrictEqual([]);
 
       // Switching to restricted ends an administrator's content access too: it
