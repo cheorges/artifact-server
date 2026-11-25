@@ -358,6 +358,10 @@ interface ArtifactManagementOperations {
   readonly listVersions: (
     command: ReadArtifactCommand,
   ) => Effect.Effect<readonly VersionRecord[], ArtifactManagementFailure>;
+  /**
+   * One page of an artifact's activity, newest first. Sharing rows (who was
+   * added or removed) are listed only for its owner and administrators.
+   */
   readonly listArtifactActions: (
     command: ListArtifactActionsCommand,
   ) => Effect.Effect<ArtifactActionPageWithActorNames, ArtifactManagementFailure>;
@@ -652,7 +656,9 @@ function makeArtifactManagementService(
     const page = yield* dependencies.repository.listArtifactActions({
       artifactId: artifact.id,
       cursor: command.cursor,
-      includeGrantChanges: true,
+      // Sharing rows name addresses, which only the owner and administrators
+      // may see, also on a deleted artifact (AUTH-039).
+      includeGrantChanges: mayChangeRestriction(command.principal, artifact),
       limit,
       projectId: project.id,
     });

@@ -51,6 +51,15 @@ const issuedKeySchema = z.object({
 const threadSchema = z.object({thread: z.object({id: z.string()})});
 const agentSchema = z.object({agent: z.object({id: z.string()})});
 const errorSchema = z.object({error: z.object({code: z.string()})});
+const activitySchema = z.object({
+  actions: z.array(z.object({
+    action: z.string(),
+    actorDisplayName: z.string().nullable(),
+    authorizedByPrincipalId: z.string().nullable(),
+    grantee: z.string().nullable(),
+  })),
+  nextCursor: z.string().nullable(),
+});
 const grantListSchema = z.object({
   active: z.boolean(),
   grants: z.array(z.object({
@@ -106,6 +115,14 @@ interface IssueKeyRequest {
 
 /** Request bodies sent by these tests: strings and string lists only. */
 type RequestBody = Readonly<Record<string, string | readonly string[]>>;
+
+/** The sharing rows of one activity page, in a stable order: one save shares one time. */
+function sharingRows(page: z.infer<typeof activitySchema>) {
+  return page.actions
+    .filter(({grantee}) => grantee !== null)
+    .toSorted((left, right) =>
+      `${left.action} ${left.grantee ?? ""}`.localeCompare(`${right.action} ${right.grantee ?? ""}`));
+}
 
 describe("grants to persons on restricted artifacts", () => {
   let installation: TestInstallation;
@@ -379,6 +396,74 @@ describe("grants to persons on restricted artifacts", () => {
     }
   });
 
+  test("AUTH-039-B: adding and removing people records one row per person for the owner and administrators, from HTTP and MCP, also after deletion", async () => {
+    expect.hasAssertions();
+    const draft = await publishAs(ada, "Ada's shared notes", "restricted");
+    expect((await grant(ada, draft.id, ["ben@example.test"])).status).toBe(200);
+    await callTool(ada, "artifact_set_grants", {
+      add: ["dora@example.test"],
+      artifactId: draft.id,
+      remove: ["ben@example.test"],
+    });
+    // Ada acts through a member-bound key, so each row also names the
+    // administrator who issued it, as access changes do.
+    const issuer = administratorMemberId();
+    const expected = [
+      {action: "grant_add", actorDisplayName: "Ada", authorizedByPrincipalId: issuer, grantee: "ben@example.test"},
+      {action: "grant_add", actorDisplayName: "Ada", authorizedByPrincipalId: issuer, grantee: "dora@example.test"},
+      {action: "grant_remove", actorDisplayName: "Ada", authorizedByPrincipalId: issuer, grantee: "ben@example.test"},
+    ];
+    expect(sharingRows(await activity(ada, draft.id))).toStrictEqual(expected);
+    expect(sharingRows(await activity(administratorActor(), draft.id))).toStrictEqual(expected);
+
+    expect((await mutate(ada, "DELETE", draft.id, {
+      expectedCurrentVersionId: draft.currentVersionId,
+    })).status).toBe(200);
+    expect(sharingRows(await activity(ada, draft.id))).toStrictEqual(expected);
+    expect(sharingRows(await activity(administratorActor(), draft.id))).toStrictEqual(expected);
+  });
+
+  test("AUTH-039-F: repeated and refused changes write nothing, and nobody else sees sharing rows", async () => {
+    expect.hasAssertions();
+    const draft = await publishAs(ada, "Ada's quiet page", "restricted");
+    expect((await grant(ada, draft.id, ["ben@example.test"])).status).toBe(200);
+    const sharingCount = async () => sharingRows(await activity(ada, draft.id)).length;
+    expect(await sharingCount()).toBe(1);
+    expect((await grant(ada, draft.id, ["ben@example.test"])).status).toBe(200);
+    expect((await grant(ada, draft.id, [], ["nobody@example.test"])).status).toBe(200);
+    expect((await grant(ada, draft.id, ["not-an-address"])).status).toBe(422);
+    expect((await grant(ada, draft.id, ["x@example.test"], ["x@example.test"])).status).toBe(422);
+    expect((await grant(
+      ada,
+      draft.id,
+      Array.from({length: 100}, (_, index) => `person${index}@example.test`),
+    )).status).toBe(409);
+    expect(await sharingCount()).toBe(1);
+
+    // The grantee pages past every sharing row to the publish row.
+    expect((await grant(ada, draft.id, ["carol@example.test", "dan@example.test"])).status).toBe(200);
+    expect(await sharingCount()).toBe(3);
+    const firstPage = await activity(ben, draft.id, 1);
+    expect(firstPage.actions.map(({action, grantee}) => ({action, grantee})))
+      .toStrictEqual([{action: "publish", grantee: null}]);
+    expect(firstPage.nextCursor).toBeNull();
+
+    // On a page every member sees, only the owner sees who it is shared with.
+    const open = await publishAs(ada, "Ada's open page");
+    expect((await grant(ada, open.id, ["erin@example.test"])).status).toBe(200);
+    expect(sharingRows(await activity(ada, open.id)).map(({grantee}) => grantee))
+      .toStrictEqual(["erin@example.test"]);
+    const carl = await memberWithKey("Carl", "carl@example.test");
+    const administratorKey = await issueKey(
+      administratorMemberId(),
+      "Administrator's key",
+      ["artifact:read", "artifact:manage:any"],
+    );
+    const othersSee = await Promise.all([carl, administratorKey].map(async (viewer) =>
+      sharingRows(await activity(viewer, open.id))));
+    expect(othersSee).toStrictEqual([[], []]);
+  });
+
   async function callTool(actor: Actor, name: string, toolArguments: McpArguments) {
     const result = await callToolResult(actor, name, toolArguments);
     if (result.isError === true) {
@@ -415,6 +500,12 @@ describe("grants to persons on restricted artifacts", () => {
     });
     expect(response.status).toBe(200);
     return toolResultSchema.parse(await response.json()).result;
+  }
+
+  async function activity(actor: Caller, artifactId: string, limit = 100) {
+    const response = await request(actor, "GET", `${artifactId}/actions?limit=${limit}`);
+    expect(response.status).toBe(200);
+    return activitySchema.parse(await response.json());
   }
 
   function grant(

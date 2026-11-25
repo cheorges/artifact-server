@@ -49,6 +49,14 @@ const holderRowsSchema = z.array(z.object({principalId: z.string()}));
 const artifactLocationSchema = z.object({projectId: z.string(), versionId: z.string()});
 const schemaVersionSchema = z.object({user_version: z.number()});
 const columnRowsSchema = z.array(z.object({name: z.string()}));
+const sharingRowsSchema = z.array(z.object({
+  action: z.string(),
+  authorizedByPrincipalId: z.string().nullable(),
+  grantee: z.string().nullable(),
+  idempotencyKey: z.string(),
+  principalId: z.string(),
+  versionId: z.string(),
+}));
 
 function schemaVersion(database: DatabaseSync): number {
   return schemaVersionSchema.parse(database.prepare("PRAGMA user_version").get()).user_version;
@@ -393,5 +401,67 @@ describe("SQLite artifact grants", () => {
     ]);
     expect(shown.nextCursor).not.toBeNull();
     expect((await page(true, 10)).items.at(-1)).toMatchObject({action: "publish", grantee: null});
+  });
+
+  test("AUTH-039 foundation: only real grant changes write one sharing row each, in the same transaction", async () => {
+    const artifact = await publishRestricted("Sharing rows", "member_owner");
+    const sharingRows = (artifactId: string) => sharingRowsSchema.parse(database.prepare(
+      `SELECT action, authorized_by_principal_id AS authorizedByPrincipalId, grantee,
+              idempotency_key AS idempotencyKey, principal_id AS principalId, version_id AS versionId
+       FROM actions WHERE artifact_id = ? AND action IN ('grant_add', 'grant_remove')
+       ORDER BY action, grantee`,
+    ).all(artifactId));
+    const change = (
+      target: PublishedFixture,
+      add: readonly string[],
+      remove: readonly string[],
+      authorizedByPrincipalId: string | null = null,
+    ) => repository.changeArtifactGrants({
+      add,
+      artifactId: target.artifactId,
+      authorizedByPrincipalId,
+      changedAt,
+      principalId: "member_owner",
+      projectId: target.projectId,
+      remove,
+    });
+    const row = (action: string, grantee: string, authorizedByPrincipalId: string | null) => ({
+      action,
+      authorizedByPrincipalId,
+      grantee,
+      idempotencyKey: expect.stringMatching(new RegExp(`^${action}:[0-9a-f]{32}$`, "u")),
+      principalId: "member_owner",
+      versionId: artifact.versionId,
+    });
+
+    await change(artifact, [anna, "ben@company.example"], [], "member_owner");
+    expect(sharingRows(artifact.artifactId)).toStrictEqual([
+      row("grant_add", anna, "member_owner"),
+      row("grant_add", "ben@company.example", "member_owner"),
+    ]);
+
+    // Repeated adds and removals of addresses not granted write nothing.
+    await change(artifact, [anna], []);
+    await change(artifact, [], ["ben@company.example", "nobody@company.example"]);
+    expect(sharingRows(artifact.artifactId)).toStrictEqual([
+      row("grant_add", anna, "member_owner"),
+      row("grant_add", "ben@company.example", "member_owner"),
+      row("grant_remove", "ben@company.example", null),
+    ]);
+
+    // A refused change writes nothing either.
+    await expect(change(
+      artifact,
+      Array.from({length: 100}, (_, index) => `person${index}@company.example`),
+      [],
+    )).rejects.toBeInstanceOf(GrantLimitReached);
+    expect(sharingRows(artifact.artifactId)).toHaveLength(3);
+
+    // Changes on an artifact that is not restricted are recorded too.
+    const open = await publishRestricted("Open sharing rows", "member_owner");
+    database.prepare("UPDATE artifacts SET restricted = 0 WHERE id = ?").run(open.artifactId);
+    await change(open, [anna], []);
+    expect(sharingRows(open.artifactId).map(({action, grantee}) => ({action, grantee})))
+      .toStrictEqual([{action: "grant_add", grantee: anna}]);
   });
 });

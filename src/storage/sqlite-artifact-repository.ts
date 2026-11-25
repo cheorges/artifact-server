@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 import { z } from "zod";
@@ -272,7 +273,16 @@ const artifactActionRowSchema = z.object({
   versionId: z.string(),
 });
 const grantCountRowSchema = z.object({count: z.number().int().nonnegative()});
-const restrictedFlagRowSchema = z.object({restricted: z.union([z.literal(0), z.literal(1)])});
+/** A live artifact a grant change applies to: its setting and current version. */
+interface LiveGrantTarget {
+  readonly currentVersionId: string;
+  readonly restricted: boolean;
+}
+
+const grantTargetRowSchema = z.object({
+  currentVersionId: z.string(),
+  restricted: z.union([z.literal(0), z.literal(1)]),
+});
 const artifactRowSchema = z.object({
   accessSetting: accessSettingSchema,
   createdAt: z.string(),
@@ -1679,7 +1689,7 @@ export class SqliteArtifactRepository implements
 
   listArtifactGrants(projectId: string, artifactId: string): Promise<ArtifactGrantList> {
     return Promise.resolve().then(() => ({
-      active: this.#requireLiveRestrictedFlag(projectId, artifactId),
+      active: this.#requireLiveGrantTarget(projectId, artifactId).restricted,
       grants: this.#grantRows(artifactId),
     }));
   }
@@ -1707,7 +1717,10 @@ export class SqliteArtifactRepository implements
   changeArtifactGrants(command: ChangeArtifactGrants): Promise<ArtifactGrantList> {
     return Promise.resolve().then(() =>
       this.#transaction(() => {
-        const restricted = this.#requireLiveRestrictedFlag(command.projectId, command.artifactId);
+        const {currentVersionId, restricted} = this.#requireLiveGrantTarget(
+          command.projectId,
+          command.artifactId,
+        );
         const insert = this.#database.prepare(
           `INSERT INTO artifact_grants
              (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
@@ -1715,13 +1728,19 @@ export class SqliteArtifactRepository implements
            ON CONFLICT DO NOTHING`,
         );
         for (const email of command.add) {
-          insert.run(command.artifactId, email, command.principalId, command.changedAt);
+          const added = insert.run(command.artifactId, email, command.principalId, command.changedAt);
+          if (Number(added.changes) === 1) {
+            this.#insertSharingAction(command, currentVersionId, artifactActionKinds.grantAdd, email);
+          }
         }
         const remove = this.#database.prepare(
           "DELETE FROM artifact_grants WHERE artifact_id = ? AND grantee_kind = 'email' AND grantee = ?",
         );
         for (const email of command.remove) {
-          remove.run(command.artifactId, email);
+          const removed = remove.run(command.artifactId, email);
+          if (Number(removed.changes) === 1) {
+            this.#insertSharingAction(command, currentVersionId, artifactActionKinds.grantRemove, email);
+          }
           if (restricted) {
             this.#revokeContentAccessOfEmail(command.projectId, command.artifactId, email);
           }
@@ -5129,19 +5148,44 @@ export class SqliteArtifactRepository implements
     );
   }
 
-  /** Whether a live artifact is restricted; fails like a missing artifact otherwise. */
-  #requireLiveRestrictedFlag(projectId: string, artifactId: string): boolean {
-    const row = restrictedFlagRowSchema.nullable().parse(
+  /**
+   * Whether a live artifact is restricted, and its current version for the
+   * activity rows of a grant change; fails like a missing artifact otherwise.
+   */
+  #requireLiveGrantTarget(projectId: string, artifactId: string): LiveGrantTarget {
+    const row = grantTargetRowSchema.nullable().parse(
       this.#database
         .prepare(
-          "SELECT restricted FROM artifacts WHERE project_id = ? AND id = ? AND deleted_at IS NULL",
+          `SELECT current_version_id AS currentVersionId, restricted FROM artifacts
+           WHERE project_id = ? AND id = ? AND deleted_at IS NULL`,
         )
         .get(projectId, artifactId) ?? null,
     );
     if (row === null) {
       throw new ArtifactNotFound({message: "The artifact does not exist."});
     }
-    return row.restricted === 1;
+    return {currentVersionId: row.currentVersionId, restricted: row.restricted === 1};
+  }
+
+  /** One activity row naming the address a grant change added or removed (AUTH-039). */
+  #insertSharingAction(
+    command: ChangeArtifactGrants,
+    versionId: string,
+    action: typeof artifactActionKinds.grantAdd | typeof artifactActionKinds.grantRemove,
+    grantee: string,
+  ): void {
+    this.#insertAction(
+      command.projectId,
+      command.artifactId,
+      versionId,
+      `${action}:${randomBytes(16).toString("hex")}`,
+      command.changedAt,
+      action,
+      command.principalId,
+      command.authorizedByPrincipalId,
+      null,
+      grantee,
+    );
   }
 
   /** Add the grant table of restricted artifacts (schema 15). */
