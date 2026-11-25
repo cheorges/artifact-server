@@ -104,11 +104,11 @@ describe("local MCP onboarding", {timeout: testTimeoutMilliseconds}, () => {
     )).toEqual({status: "ok"});
 
     const second = await connectStdio(dataDirectory);
-    expect((await second.client.listTools()).tools).toHaveLength(34);
+    expect((await second.client.listTools()).tools).toHaveLength(35);
     await second.client.close();
 
     const legacy = await connectStdio(dataDirectory, "legacy");
-    expect((await legacy.client.listTools()).tools).toHaveLength(34);
+    expect((await legacy.client.listTools()).tools).toHaveLength(35);
     const legacyCapabilities = await legacy.client.callTool({
       arguments: {},
       name: "artifact_capabilities",
