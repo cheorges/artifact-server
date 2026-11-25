@@ -34,6 +34,7 @@ const actionRecordSchema = z.object({
   authorizedByPrincipalId: z.string().nullable(),
   createdAt: z.iso.datetime(),
   grantee: z.null(),
+  granteeName: z.null(),
   id: z.string(),
   idempotencyKey: z.string(),
   principalId: z.string(),

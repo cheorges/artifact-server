@@ -194,7 +194,7 @@ const artifactActionKindSchema = z.enum([
 ]);
 const nonnegativeIntegerSchema = z.coerce.number().int().nonnegative();
 /** A live artifact a grant change applies to: its setting and current version. */
-const removedGroupRowSchema = z.object({displayName: z.string()});
+const removedGroupRowSchema = z.object({displayName: z.string().nullable()});
 
 interface LiveGrantTarget {
   readonly currentVersionId: string;
@@ -338,6 +338,7 @@ const artifactActionRowSchema = z.object({
   authorizedByPrincipalId: z.string().nullable(),
   createdAt: z.string(),
   grantee: z.string().nullable(),
+  granteeName: z.string().nullable(),
   id: z.string(),
   idempotencyKey: z.string(),
   principalId: z.string(),
@@ -1536,7 +1537,9 @@ export class PostgresArtifactRepository implements
           command.projectId,
           command.artifactId,
         );
-        // One activity row per address a change really adds or removes (AUTH-039).
+        // One activity row per address or group a change really adds or removes
+        // (AUTH-039, AUTH-040). A group row carries the group's id as its
+        // grantee and the name the group is shared under beside it.
         const recordSharing = (
           action:
             | typeof artifactActionKinds.grantAdd
@@ -1544,11 +1547,12 @@ export class PostgresArtifactRepository implements
             | typeof artifactActionKinds.grantGroupRemove
             | typeof artifactActionKinds.grantRemove,
           grantee: string,
+          granteeName: string | null = null,
         ) => sql.unsafe(
           `INSERT INTO actions (
              installation_id, project_id, id, artifact_id, version_id, action, principal_id,
-             authorized_by_principal_id, idempotency_key, created_at, grantee
-           ) VALUES ($1, $2, gen_random_uuid()::text, $3, $4, $5, $6, $7, $8, $9, $10)`,
+             authorized_by_principal_id, idempotency_key, created_at, grantee, grantee_name
+           ) VALUES ($1, $2, gen_random_uuid()::text, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [
             installationId,
             command.projectId,
@@ -1560,6 +1564,7 @@ export class PostgresArtifactRepository implements
             `${action}:${crypto.randomUUID().replaceAll("-", "")}`,
             command.changedAt,
             grantee,
+            granteeName,
           ],
         );
         yield* Effect.forEach(command.add, (email) => Effect.gen(function*() {
@@ -1606,7 +1611,7 @@ export class PostgresArtifactRepository implements
             [installationId, command.artifactId, group.id, command.principalId, command.changedAt, group.displayName],
           );
           if (inserted.length > 0) {
-            yield* recordSharing(artifactActionKinds.grantGroupAdd, group.displayName);
+            yield* recordSharing(artifactActionKinds.grantGroupAdd, group.id, group.displayName);
           }
         }), {discard: true});
         const removedGroups = yield* Effect.forEach(command.removeGroups, (groupId) => Effect.gen(function*() {
@@ -1619,7 +1624,7 @@ export class PostgresArtifactRepository implements
           );
           const row = removedGroupRowSchema.optional().parse(removed[0]);
           if (row === undefined) return false;
-          yield* recordSharing(artifactActionKinds.grantGroupRemove, row.displayName);
+          yield* recordSharing(artifactActionKinds.grantGroupRemove, groupId, row.displayName);
           return true;
         }));
         if (active && removedGroups.includes(true)) {
@@ -2117,7 +2122,7 @@ export class PostgresArtifactRepository implements
           action, principal_id AS "principalId",
           authorized_by_principal_id AS "authorizedByPrincipalId",
           idempotency_key AS "idempotencyKey", created_at AS "createdAt",
-          grantee
+          grantee, grantee_name AS "granteeName"
          FROM actions
          WHERE installation_id = $1 AND project_id = $2 AND artifact_id = $3
            AND ($4::text IS NULL OR created_at < $4

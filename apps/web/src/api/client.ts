@@ -221,8 +221,8 @@ export type DirectoryGroup = z.infer<typeof directoryGroupSchema>;
 
 /** A directory group named for a grant change: its id and its exact name. */
 export interface GroupReference {
+  readonly displayName: string;
   readonly id: string;
-  readonly name: string;
 }
 
 /** Which artifacts the catalog lists. */
@@ -358,8 +358,14 @@ export interface ArtifactAction {
   readonly artifactId: string;
   readonly authorizedByPrincipalId: string | null;
   readonly createdAt: string;
-  /** The address a sharing row added or removed; null for every other kind (AUTH-039). */
+  /**
+   * The address a sharing row added or removed, or the directory id of the
+   * group a group sharing row names; null for every other kind (AUTH-039,
+   * AUTH-040).
+   */
   readonly grantee: string | null;
+  /** The name of the group a group sharing row names; null for every other kind. */
+  readonly granteeName: string | null;
   readonly id: string;
   readonly idempotencyKey: string;
   readonly principalId: string;
@@ -468,6 +474,7 @@ const actionSchema: z.ZodType<ArtifactAction> = z.object({
   authorizedByPrincipalId: z.string().nullable(),
   createdAt: z.string(),
   grantee: z.string().nullable(),
+  granteeName: z.string().nullable(),
   id: z.string(),
   idempotencyKey: z.string(),
   principalId: z.string(),

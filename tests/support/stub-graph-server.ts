@@ -41,6 +41,8 @@ export interface StubGraphBehavior {
   nextLinkOrigin: string | null;
   /** Answer the next Graph call with 401, once. */
   rejectTokenOnce: boolean;
+  /** The `Retry-After` header sent with a `status` answer. */
+  retryAfter: string | null;
   /** Answer every Graph call with this status instead of 200. */
   status: number | null;
 }
@@ -71,6 +73,7 @@ export async function startStubGraphServer(): Promise<StubGraphServer> {
     nextLinkOrigin: null,
     pageSize: 999,
     rejectTokenOnce: false,
+    retryAfter: null,
     status: null,
   };
   let origin = "";
@@ -109,7 +112,10 @@ export async function startStubGraphServer(): Promise<StubGraphServer> {
       behavior.rejectTokenOnce = false;
       return json(response, 401, JSON.stringify({error: {code: "InvalidAuthenticationToken"}}));
     }
-    if (behavior.status !== null) return json(response, behavior.status, JSON.stringify({error: {code: "stub"}}));
+    if (behavior.status !== null) {
+      if (behavior.retryAfter !== null) response.setHeader("Retry-After", behavior.retryAfter);
+      return json(response, behavior.status, JSON.stringify({error: {code: "stub"}}));
+    }
     if (behavior.body !== null) {
       response.writeHead(200, {"Content-Type": "application/json"}).end(behavior.body);
       return undefined;

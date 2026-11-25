@@ -210,12 +210,13 @@ export interface ChangeArtifactGrantsCommand extends ReadArtifactCommand {
 }
 
 /**
- * A directory group as a caller names it. The name must be the group's own:
- * it is what the person confirmed, so a differing name is refused.
+ * A directory group as a caller names it, in the fields a group search
+ * answers. The name must be the group's own: it is what the person
+ * confirmed, so a differing name is refused.
  */
 export interface GroupReference {
+  readonly displayName: string;
   readonly id: string;
-  readonly name: string;
 }
 
 /** Input for searching the directory's groups. */
@@ -795,8 +796,9 @@ function makeArtifactManagementService(
           message: "An address cannot be added and removed in the same change.",
         });
       }
-      const groupsNamed = command.addGroups.length > 0 || command.removeGroups.length > 0;
-      if (groupsNamed && !dependencies.groups.available) {
+      // Removing needs no directory, so groups shared before a directory was
+      // switched off can still be taken away.
+      if (command.addGroups.length > 0 && !dependencies.groups.available) {
         return yield* new GroupSharingUnavailable({
           message: "This installation has no directory, so artifacts cannot be shared with groups.",
         });
@@ -836,7 +838,7 @@ function makeArtifactManagementService(
       if (group === null) {
         return yield* new GroupNotFound({message: "The directory has no such group."});
       }
-      if (group.displayName !== reference.name) {
+      if (group.displayName !== reference.displayName) {
         return yield* new GroupNameMismatch({
           message: "The group's name in the directory differs from the name given.",
         });
@@ -854,7 +856,7 @@ function makeArtifactManagementService(
       const names = new Map(current.grants
         .filter(({kind}) => kind === artifactGranteeKinds.group)
         .map(({displayName, grantee}) => [grantee, displayName]));
-      if (references.some(({id, name}) => names.has(id) && names.get(id) !== name)) {
+      if (references.some(({displayName, id}) => names.has(id) && names.get(id) !== displayName)) {
         return yield* new GroupNameMismatch({
           message: "The group is shared under another name than the name given.",
         });

@@ -841,7 +841,7 @@ describe("Cloudflare D1 comments", () => {
 
       // No directory in the Worker: group sharing is refused and reported off.
       const refused = await asAda(`${artifactUrl}/grants`, {
-        body: JSON.stringify({addGroups: [{id: "11111111-1111-4111-8111-111111111111", name: "Developer Productivity"}]}),
+        body: JSON.stringify({addGroups: [{displayName: "Developer Productivity", id: "11111111-1111-4111-8111-111111111111"}]}),
         method: "PATCH",
       });
       expect(refused.status).toBe(409);
@@ -881,8 +881,8 @@ describe("Cloudflare D1 comments", () => {
         const insertAction = upgraded.prepare(`
           INSERT INTO actions (
             id, project_id, artifact_id, version_id, action, principal_id,
-            authorized_by_principal_id, idempotency_key, created_at, grantee
-          ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, '2026-11-12T00:00:00.000Z', 'Developer Productivity')
+            authorized_by_principal_id, idempotency_key, created_at, grantee, grantee_name
+          ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, '2026-11-12T00:00:00.000Z', 'g-dep', 'Developer Productivity')
         `);
         for (const action of ["grant_group_add", "grant_group_remove"]) {
           insertAction.run(

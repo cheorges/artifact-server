@@ -8,7 +8,7 @@
 import {afterEach, beforeEach, describe, expect, test} from "vitest";
 
 import {createEntraGroupDirectory} from "../../src/identity/entra-group-directory.js";
-import type {GroupDirectory} from "../../src/core/group-directory.js";
+import {groupLookupBackoffMilliseconds, type GroupDirectory} from "../../src/core/group-directory.js";
 import {startStubGraphServer, type StubGraphServer} from "../support/stub-graph-server.js";
 
 const dep = "11111111-1111-4111-8111-111111111111";
@@ -27,8 +27,10 @@ function failureOf(call: Promise<object | null>): Promise<Error> {
 describe("the Entra group directory", () => {
   let graph: StubGraphServer;
   let directory: GroupDirectory;
+  let now: number;
 
   beforeEach(async () => {
+    now = 1_000_000;
     graph = await startStubGraphServer();
     graph.groups.push(
       {displayName: "Developer Productivity", id: dep, mail: "dep@example.test", members: [ben], visibility: null},
@@ -40,6 +42,7 @@ describe("the Entra group directory", () => {
       clientSecret: graph.clientSecret,
       graphOrigin: graph.origin,
       loginOrigin: graph.origin,
+      now: () => now,
       tenantId: graph.tenantId,
       timeoutMilliseconds: 300,
     });
@@ -117,6 +120,7 @@ describe("the Entra group directory", () => {
       graph.behavior.status = status;
       // eslint-disable-next-line no-await-in-loop -- one behavior at a time
       failures.push(await failureOf(directory.groupIdsOfSubject(ben)));
+      now += groupLookupBackoffMilliseconds;
     }
     graph.behavior.status = null;
     graph.behavior.body = '{"value": "x"}';
@@ -127,6 +131,7 @@ describe("the Entra group directory", () => {
     graph.behavior.delayMilliseconds = 600;
     failures.push(await failureOf(directory.searchGroups("devel")));
     graph.behavior.delayMilliseconds = 0;
+    now += groupLookupBackoffMilliseconds;
 
     expect(failures).toHaveLength(6);
     for (const failure of failures) {
@@ -135,8 +140,76 @@ describe("the Entra group directory", () => {
       expect(text).not.toContain(graph.clientSecret);
       expect(text).not.toContain("stub-graph-token");
     }
-    // The directory answers again as soon as Graph does.
+    // The directory answers again once Graph does and the pause is over.
     expect((await directory.searchGroups("devel")).map(({id}) => id)).toStrictEqual([dep]);
+  });
+
+  test("AUTH-040 foundation: a throttled, failing, or silent directory is left alone for everyone until its pause ends", async () => {
+    await directory.searchGroups("devel");
+    const paused = async (): Promise<boolean> => {
+      const before = graph.requests.length;
+      const failures = await Promise.all([
+        failureOf(directory.groupIdsOfSubject(ben)),
+        failureOf(directory.findGroup(dep)),
+        failureOf(directory.searchGroups("devel")),
+      ]);
+      for (const failure of failures) expect(failure).toMatchObject({_tag: "DirectoryUnavailable"});
+      return graph.requests.length === before;
+    };
+
+    // Graph names the wait: nothing is sent before it is over.
+    graph.behavior.status = 429;
+    graph.behavior.retryAfter = "120";
+    await failureOf(directory.groupIdsOfSubject(ben));
+    graph.behavior.status = null;
+    graph.behavior.retryAfter = null;
+    now += 119_000;
+    expect(await paused()).toBe(true);
+    now += 1_000;
+    expect(await directory.groupIdsOfSubject(ben)).toHaveLength(2);
+
+    // Without a named wait a server error pauses for half a minute.
+    graph.behavior.status = 503;
+    await failureOf(directory.findGroup(dep));
+    graph.behavior.status = null;
+    now += groupLookupBackoffMilliseconds - 1;
+    expect(await paused()).toBe(true);
+    now += 1;
+    expect(await directory.findGroup(dep)).not.toBeNull();
+
+    // A named wait is never trusted beyond five minutes.
+    graph.behavior.status = 429;
+    graph.behavior.retryAfter = "86400";
+    await failureOf(directory.findGroup(dep));
+    graph.behavior.status = null;
+    graph.behavior.retryAfter = null;
+    now += 5 * 60_000;
+    expect(await directory.findGroup(dep)).not.toBeNull();
+
+    // A directory that does not answer is paused too.
+    graph.behavior.delayMilliseconds = 600;
+    await failureOf(directory.searchGroups("devel"));
+    graph.behavior.delayMilliseconds = 0;
+    expect(await paused()).toBe(true);
+    now += groupLookupBackoffMilliseconds;
+
+    // A refusal that concerns one request pauses nothing.
+    graph.behavior.status = 403;
+    await failureOf(directory.findGroup(dep));
+    graph.behavior.status = null;
+    expect(await directory.findGroup(dep)).not.toBeNull();
+  });
+
+  test("AUTH-040 foundation: requests that start together share one sign-in, and a token is renewed when its time is up", async () => {
+    await Promise.all([directory.searchGroups("devel"), directory.findGroup(dep), directory.groupIdsOfSubject(ben)]);
+    expect(graph.tokens).toHaveLength(1);
+    // The stub's tokens last an hour; one is renewed a minute early.
+    now += 59 * 60_000 - 1;
+    await directory.findGroup(dep);
+    expect(graph.tokens).toHaveLength(1);
+    now += 1;
+    await Promise.all([directory.searchGroups("devel"), directory.findGroup(dep)]);
+    expect(graph.tokens).toHaveLength(2);
   });
 
   test("AUTH-040 foundation: the token is requested once, renewed after a 401, and a wrong secret is directory unavailable", async () => {

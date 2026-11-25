@@ -25,7 +25,7 @@ function addressesOf(grants: Grants): readonly string[] {
 function groupsOf(grants: Grants): readonly GroupReference[] {
   return grants
     .filter(({kind}) => kind === "group")
-    .map(({displayName, grantee}) => ({id: grantee, name: displayName ?? grantee}));
+    .map(({displayName, grantee}) => ({displayName: displayName ?? grantee, id: grantee}));
 }
 
 /**
@@ -96,6 +96,7 @@ export function PeopleWithAccess({
   };
 
   const grantees = grants === null ? null : addressesOf(grants);
+  const groups = grants === null ? [] : groupsOf(grants);
 
   return (
     <>
@@ -150,13 +151,15 @@ export function PeopleWithAccess({
         Admins can always see it. People are matched by email when they sign in.
       </p>
     </fieldset>
-    {groupSharing ? (
+    {/* Without a directory, groups shared earlier stay listed so they can be removed. */}
+    {groupSharing || groups.length > 0 ? (
       <GroupsWithAccess
         applies={applies}
         disabled={disabled || busy}
-        groups={grants === null ? [] : groupsOf(grants)}
+        groups={groups}
         onAdd={(group) => change([], [], [group], [])}
         onRemove={(group) => change([], [], [], [group])}
+        searchable={groupSharing}
       />
     ) : null}
     </>

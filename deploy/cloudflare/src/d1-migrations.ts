@@ -107,7 +107,8 @@ const schemaSql = `
     authorized_by_principal_id TEXT,
     idempotency_key TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    grantee TEXT
+    grantee TEXT,
+    grantee_name TEXT
   );
 
   CREATE TABLE IF NOT EXISTS staged_uploads (
@@ -858,8 +859,8 @@ const widenRegisteredAgentsStatements = [
 /**
  * Rebuild the action table with the current kinds and the grantee column,
  * keeping every row. Revision 13 added the column and the two person kinds;
- * revision 14 adds the two group kinds, so a revision 13 table keeps its
- * grantee values.
+ * revision 14 adds the two group kinds and the column for a group's name, so
+ * a revision 13 table keeps its grantee values.
  */
 const rebuildActionsForGrantsStatements = (keepGrantee: boolean) => [
   `CREATE TABLE actions_upgrade_snapshot AS SELECT
@@ -877,7 +878,8 @@ const rebuildActionsForGrantsStatements = (keepGrantee: boolean) => [
     authorized_by_principal_id TEXT,
     idempotency_key TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    grantee TEXT
+    grantee TEXT,
+    grantee_name TEXT
   )`,
   "DROP TABLE actions",
   "ALTER TABLE actions_next RENAME TO actions",
@@ -899,7 +901,7 @@ async function rebuildActionsForGrantsIfNeeded(database: D1Database): Promise<vo
   if (table === null) return;
   const columns = await database.prepare("PRAGMA table_info(actions)").all<{name: string}>();
   const hasGrantee = hasColumn(columns, "grantee");
-  if (hasGrantee && table.sql.includes("'grant_group_add'")) return;
+  if (hasGrantee && hasColumn(columns, "grantee_name") && table.sql.includes("'grant_group_add'")) return;
   await database.batch(
     rebuildActionsForGrantsStatements(hasGrantee).map((statement) => database.prepare(statement)),
   );

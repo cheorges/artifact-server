@@ -4,7 +4,7 @@ import type {ArtifactAction} from "../api/client.ts";
  * Converts one activity row into compact action-history text. A sharing row
  * names the address or the group it added or removed (AUTH-039, AUTH-040).
  */
-export function actionLabel(action: Pick<ArtifactAction, "action" | "grantee">): string {
+export function actionLabel(action: Pick<ArtifactAction, "action" | "grantee" | "granteeName">): string {
   switch (action.action) {
     case "capture":
       return "Captured linked file";
@@ -33,9 +33,9 @@ export function actionLabel(action: Pick<ArtifactAction, "action" | "grantee">):
     case "grant_add":
       return `Shared with ${action.grantee ?? "someone"}`;
     case "grant_group_add":
-      return `Shared with group ${action.grantee ?? "a group"}`;
+      return `Shared with group ${action.granteeName ?? "a group"}`;
     case "grant_group_remove":
-      return `Stopped sharing with group ${action.grantee ?? "a group"}`;
+      return `Stopped sharing with group ${action.granteeName ?? "a group"}`;
     case "grant_remove":
       return `Stopped sharing with ${action.grantee ?? "someone"}`;
     case "publish":

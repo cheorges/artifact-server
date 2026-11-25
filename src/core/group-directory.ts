@@ -54,3 +54,10 @@ export const groupMembershipCacheMilliseconds = 5 * 60 * 1_000;
  * on every request.
  */
 export const groupLookupBackoffMilliseconds = 30 * 1_000;
+
+/**
+ * How long one request waits for a caller's group ids. A lookup that takes
+ * longer counts as failed for the requests waiting on it; its answer is
+ * still remembered when it arrives.
+ */
+export const groupLookupDeadlineMilliseconds = 10 * 1_000;

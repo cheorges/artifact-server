@@ -44,9 +44,9 @@ const allCapabilities = [
   "content-session:issue",
 ] as const;
 
-const dep = {id: "11111111-1111-4111-8111-111111111111", name: "Developer Productivity"};
-const guild = {id: "22222222-2222-4222-8222-222222222222", name: "Architecture Guild"};
-const platform = {id: "33333333-3333-4333-8333-333333333333", name: "Platform Chapter"};
+const dep = {id: "11111111-1111-4111-8111-111111111111", displayName: "Developer Productivity"};
+const guild = {id: "22222222-2222-4222-8222-222222222222", displayName: "Architecture Guild"};
+const platform = {id: "33333333-3333-4333-8333-333333333333", displayName: "Platform Chapter"};
 
 const artifactSchema = z.object({
   accessSetting: z.enum(["account_required", "public_link", "restricted"]),
@@ -63,7 +63,11 @@ const issuedKeySchema = z.object({
 });
 const errorSchema = z.object({error: z.object({code: z.string()})});
 const activitySchema = z.object({
-  actions: z.array(z.object({action: z.string(), grantee: z.string().nullable()}).loose()),
+  actions: z.array(z.object({
+    action: z.string(),
+    grantee: z.string().nullable(),
+    granteeName: z.string().nullable(),
+  }).loose()),
 });
 const grantListSchema = z.object({
   active: z.boolean(),
@@ -94,8 +98,8 @@ const mcpGetSchema = z.object({grants: grantListSchema.nullable()}).loose();
 const mcpListSchema = z.object({artifacts: z.array(z.object({name: z.string()}).loose())}).loose();
 
 interface GroupReference {
+  readonly displayName: string;
   readonly id: string;
-  readonly name: string;
 }
 
 interface GrantChange {
@@ -122,7 +126,7 @@ interface ApplicationCookies {
 function groupRows(page: z.infer<typeof activitySchema>) {
   return page.actions
     .filter(({action}) => action.startsWith("grant_group_"))
-    .map(({action, grantee}) => ({action, grantee}))
+    .map(({action, grantee, granteeName}) => ({action, grantee, granteeName}))
     .toSorted((left, right) => `${left.action} ${left.grantee ?? ""}`.localeCompare(`${right.action} ${right.grantee ?? ""}`));
 }
 
@@ -156,10 +160,10 @@ describe("grants to directory groups on restricted artifacts", () => {
     cara = await memberWithKey("Cara", "cara@example.test", "oid-cara");
     erin = await memberWithKey("Erin", "erin@example.test", "oid-erin");
     service = await issueKey(undefined, "Release bot");
-    directory.addGroup({displayName: dep.name, id: dep.id, mail: "dep@example.test"}, ["oid-ben"]);
+    directory.addGroup({displayName: dep.displayName, id: dep.id, mail: "dep@example.test"}, ["oid-ben"]);
     // Cara is a member through a nested group: the directory reports her like a direct member.
-    directory.addGroup({displayName: guild.name, id: guild.id, mail: null}, ["oid-cara"]);
-    directory.addGroup({displayName: platform.name, id: platform.id, mail: "platform@example.test"}, []);
+    directory.addGroup({displayName: guild.displayName, id: guild.id, mail: null}, ["oid-cara"]);
+    directory.addGroup({displayName: platform.displayName, id: platform.id, mail: "platform@example.test"}, []);
   });
 
   afterEach(async () => {
@@ -190,8 +194,8 @@ describe("grants to directory groups on restricted artifacts", () => {
       artifactId: draft.id,
     }));
     expect(overMcp.grants.map(({displayName, grantee, kind}) => ({displayName, grantee, kind}))).toStrictEqual([
-      {displayName: guild.name, grantee: guild.id, kind: "group"},
-      {displayName: dep.name, grantee: dep.id, kind: "group"},
+      {displayName: guild.displayName, grantee: guild.id, kind: "group"},
+      {displayName: dep.displayName, grantee: dep.id, kind: "group"},
     ]);
 
     const openings = await Promise.all([ben, cara].map(async (member) => ({
@@ -210,17 +214,19 @@ describe("grants to directory groups on restricted artifacts", () => {
     expect(await listedNames(ada, "shared_with_me")).toStrictEqual([]);
 
     expect(groupRows(await activity(ada, draft.id))).toStrictEqual([
-      {action: "grant_group_add", grantee: guild.name},
-      {action: "grant_group_add", grantee: dep.name},
+      {action: "grant_group_add", grantee: dep.id, granteeName: dep.displayName},
+      {action: "grant_group_add", grantee: guild.id, granteeName: guild.displayName},
     ]);
     const readByOwner = mcpGetSchema.parse(await callTool(ada, "artifact_get", {artifactId: draft.id}));
-    expect(readByOwner.grants?.grants.map(({displayName}) => displayName)).toStrictEqual([guild.name, dep.name]);
+    expect(readByOwner.grants?.grants.map(({displayName}) => displayName)).toStrictEqual([guild.displayName, dep.displayName]);
     // The membership was asked once per member, not per request.
     expect(directory.calls.membership).toBeLessThanOrEqual(3);
 
     const removed = await change(ada, draft.id, {removeGroups: [dep]});
     expect(grantListSchema.parse(await removed.json()).grants.map(({grantee}) => grantee)).toStrictEqual([guild.id]);
-    expect(groupRows(await activity(ada, draft.id))).toContainEqual({action: "grant_group_remove", grantee: dep.name});
+    expect(groupRows(await activity(ada, draft.id))).toContainEqual({
+      action: "grant_group_remove", grantee: dep.id, granteeName: dep.displayName,
+    });
   });
 
   test("AUTH-040-F: members never manage or learn the groups, a failed lookup or a left group gives no access, and wrong, unknown, or unreachable groups change nothing", async () => {
@@ -254,6 +260,12 @@ describe("grants to directory groups on restricted artifacts", () => {
     expect(seenByMember.grants).toBeNull();
     expect(groupRows(await activity(ben, draft.id))).toStrictEqual([]);
     expect(groupRows(await activity(erin, draft.id))).toStrictEqual([]);
+
+    // A person granted by address opens the artifact without the directory being asked.
+    now += groupMembershipCacheMilliseconds;
+    const askedBeforeErin = directory.calls.membership;
+    expect((await request(erin, "GET", draft.id)).status).toBe(200);
+    expect(directory.calls.membership).toBe(askedBeforeErin);
 
     // A failed lookup gives no access through groups, is not remembered, and leaves person grants alone.
     now += groupMembershipCacheMilliseconds;
@@ -292,17 +304,17 @@ describe("grants to directory groups on restricted artifacts", () => {
       const response = await change(ada, draft.id, changeBody);
       return {code: errorSchema.parse(await response.json()).error.code, status: response.status};
     };
-    expect(await refused({addGroups: [{id: platform.id, name: "Platform"}]}))
+    expect(await refused({addGroups: [{id: platform.id, displayName: "Platform"}]}))
       .toStrictEqual({code: "GROUP_NAME_MISMATCH", status: 409});
-    expect(await refused({removeGroups: [{id: dep.id, name: "Developers"}]}))
+    expect(await refused({removeGroups: [{id: dep.id, displayName: "Developers"}]}))
       .toStrictEqual({code: "GROUP_NAME_MISMATCH", status: 409});
-    expect(await refused({addGroups: [{id: "44444444-4444-4444-8444-444444444444", name: "Nobody"}]}))
+    expect(await refused({addGroups: [{id: "44444444-4444-4444-8444-444444444444", displayName: "Nobody"}]}))
       .toStrictEqual({code: "GROUP_NOT_FOUND", status: 404});
     expect((await change(ada, draft.id, {addGroups: [platform], removeGroups: [platform]})).status).toBe(422);
     directory.failNext(1);
     expect(await refused({addGroups: [platform]})).toStrictEqual({code: "DIRECTORY_UNAVAILABLE", status: 503});
     const overMcp = await callToolResult(ada, "artifact_set_grants", {
-      addGroups: [{id: platform.id, name: "Platform"}],
+      addGroups: [{id: platform.id, displayName: "Platform"}],
       artifactId: draft.id,
     });
     expect(overMcp.isError).toBe(true);
@@ -320,8 +332,11 @@ describe("grants to directory groups on restricted artifacts", () => {
     expect((await change(ada, draft.id, {removeGroups: [dep]})).status).toBe(200);
   });
 
-  test("AUTH-040 foundation: an installation without a directory refuses group grants and reports the capability off", async () => {
+  test("AUTH-040 foundation: an installation without a directory refuses new group grants, reports the capability off, and still shows and removes stored groups", async () => {
     expect.hasAssertions();
+    const shared = await publishAs(ada, "Ada's page shared before", "restricted");
+    expect((await change(ada, shared.id, {addGroups: [dep]})).status).toBe(200);
+    expect((await request(ben, "GET", shared.id)).status).toBe(200);
     await server.stop();
     server = await startTestServer(installation);
     administrator = await signInAdministrator(server, installation);
@@ -331,6 +346,16 @@ describe("grants to directory groups on restricted artifacts", () => {
     expect(errorSchema.parse(await response.json()).error.code).toBe("GROUP_SHARING_UNAVAILABLE");
     expect((await searchGroups(ben, "prod")).status).toBe(409);
     expect(await groupSharingCapability()).toBe(false);
+    // A group shared earlier gives no access now, stays visible to the owner, and can be removed.
+    expect((await request(ben, "GET", shared.id)).status).not.toBe(200);
+    const stored = grantListSchema.parse(await (await request(ada, "GET", `${shared.id}/grants`)).json());
+    expect(stored.grants.map(({grantee}) => grantee)).toStrictEqual([dep.id]);
+    const removed = await change(ada, shared.id, {removeGroups: [dep]});
+    expect(removed.status).toBe(200);
+    expect(grantListSchema.parse(await removed.json()).grants).toStrictEqual([]);
+    expect(groupRows(await activity(ada, shared.id))).toContainEqual({
+      action: "grant_group_remove", grantee: dep.id, granteeName: dep.displayName,
+    });
     // Person grants behave as before.
     expect((await change(ada, draft.id, {add: ["ben@example.test"]})).status).toBe(200);
     expect((await request(ben, "GET", draft.id)).status).toBe(200);
@@ -340,11 +365,11 @@ describe("grants to directory groups on restricted artifacts", () => {
     expect.hasAssertions();
     expect(await groupSharingCapability()).toBe(true);
     const byName = groupSearchSchema.parse(await (await searchGroups(ben, "prod")).json());
-    expect(byName.groups).toStrictEqual([{displayName: dep.name, id: dep.id, mail: "dep@example.test"}]);
+    expect(byName.groups).toStrictEqual([{displayName: dep.displayName, id: dep.id, mail: "dep@example.test"}]);
     const byAddress = groupSearchSchema.parse(await (await searchGroups(ben, " platform@example.test ")).json());
     expect(byAddress.groups.map(({id}) => id)).toStrictEqual([platform.id]);
     const overMcp = groupSearchSchema.parse(await callTool(ben, "artifact_group_search", {query: "arch"}));
-    expect(overMcp.groups.map(({displayName}) => displayName)).toStrictEqual([guild.name]);
+    expect(overMcp.groups.map(({displayName}) => displayName)).toStrictEqual([guild.displayName]);
     for (let index = 0; index < 15; index += 1) {
       directory.addGroup({displayName: `Squad ${index}`, id: `squad-${index}`, mail: null}, []);
     }

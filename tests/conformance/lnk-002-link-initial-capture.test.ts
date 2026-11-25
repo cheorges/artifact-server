@@ -99,6 +99,7 @@ const actionPageSchema = z.object({
     authorizedByPrincipalId: z.string().nullable(),
     createdAt: z.iso.datetime(),
     grantee: z.null(),
+    granteeName: z.null(),
     id: z.string().min(1),
     idempotencyKey: z.string().min(1),
     principalId: z.string().min(1),

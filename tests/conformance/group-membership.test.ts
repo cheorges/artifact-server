@@ -73,6 +73,37 @@ describe("group membership (AUTH-040)", () => {
     expect(directory.calls.membership).toBe(1);
   });
 
+  test("AUTH-040 foundation: a directory that does not answer in time counts as failed, and its late answer is still remembered", async () => {
+    const answers: ((groupIds: readonly string[]) => void)[] = [];
+    const reasons: string[] = [];
+    const membership = createGroupMembership({
+      deadlineMilliseconds: 20,
+      directory: {
+        findGroup: () => Promise.resolve(null),
+        groupIdsOfSubject: () => new Promise((resolve) => {
+          answers.push(resolve);
+        }),
+        searchGroups: () => Promise.resolve([]),
+      },
+      now: () => 1_000_000,
+      reportFailure: (reason) => Effect.sync(() => {
+        reasons.push(reason);
+      }),
+      subjectOf: () => Promise.resolve("oid-ben"),
+    });
+    expect(await Effect.runPromise(membership.groupIdsOf("member_ben"))).toStrictEqual([]);
+    expect(reasons).toStrictEqual(["The directory did not answer in time."]);
+    // Inside the pause nobody waits again.
+    expect(await Effect.runPromise(membership.groupIdsOf("member_ben"))).toStrictEqual([]);
+    expect(answers).toHaveLength(1);
+    answers[0]?.(["g-dep"]);
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(await Effect.runPromise(membership.groupIdsOf("member_ben"))).toStrictEqual(["g-dep"]);
+    expect(reasons).toHaveLength(1);
+  });
+
   test("AUTH-040 foundation: nobody without a directory subject is asked about", async () => {
     const {directory, groupIdsOf} = fixture();
     expect(await groupIdsOf("member_without_subject")).toStrictEqual([]);

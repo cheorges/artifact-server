@@ -218,7 +218,11 @@ who leaves a group in the directory loses access after at most 20 minutes (five
 minutes, plus the 15 minutes an open content session lasts); removing the group
 from the artifact ends access at once. When the directory cannot be reached,
 access that rests on a group is refused until it answers again, and access
-through a person grant, ownership, or administration is unaffected. Groups whose
+through a person grant, ownership, or administration is unaffected. After the
+directory throttles the server, fails, or does not answer, the server asks
+nothing for the time the directory names, five minutes at most, or 30 seconds.
+With the setting removed again, stored groups give no access; the owner still
+sees them and can remove them. Groups whose
 membership the directory hides cannot be used. People and groups share the limit
 of 100 per artifact. The Cloudflare deployment has no directory and refuses
 group grants.

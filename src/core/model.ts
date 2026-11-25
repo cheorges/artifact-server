@@ -131,8 +131,14 @@ export interface ArtifactActionRecord {
   readonly artifactId: string;
   readonly authorizedByPrincipalId: string | null;
   readonly createdAt: string;
-  /** The address a sharing row (`grant_add`, `grant_remove`) names; null for every other kind. */
+  /**
+   * Whom a sharing row names: the address of `grant_add` and `grant_remove`,
+   * the directory group id of `grant_group_add` and `grant_group_remove`;
+   * null for every other kind.
+   */
   readonly grantee: string | null;
+  /** The name a group sharing row's group had when the row was written; null for every other kind. */
+  readonly granteeName: string | null;
   readonly id: string;
   readonly idempotencyKey: string;
   readonly principalId: string;

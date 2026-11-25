@@ -2,6 +2,7 @@ import {z} from "zod";
 
 import {DirectoryUnavailable} from "../core/errors.js";
 import {
+  groupLookupBackoffMilliseconds,
   maximumGroupSearchResults,
   minimumGroupSearchCharacters,
   type DirectoryGroup,
@@ -16,6 +17,8 @@ export interface EntraGroupDirectoryInput {
   readonly graphOrigin?: string;
   /** The Entra token endpoint's origin; tests point it at a stand-in. */
   readonly loginOrigin?: string;
+  /** Milliseconds since the epoch; tests move it. */
+  readonly now?: () => number;
   readonly tenantId: string;
   /** Upper bound of one request to Entra or Graph. */
   readonly timeoutMilliseconds?: number;
@@ -26,6 +29,8 @@ const defaultLoginOrigin = "https://login.microsoftonline.com";
 const defaultTimeoutMilliseconds = 5_000;
 /** Renew the token this long before Entra says it expires. */
 const tokenRenewalMarginMilliseconds = 60_000;
+/** Longest pause Entra or Graph can ask for with `Retry-After`. */
+const maximumPauseMilliseconds = 5 * 60_000;
 /** Upper bound of membership pages read for one person (999 groups each). */
 const maximumMembershipPages = 20;
 const groupFields = "id,displayName,mail,visibility";
@@ -59,23 +64,40 @@ interface AccessToken {
  * `GroupMember.Read.All` (decision 0034). Read-only. Every failure rejects
  * with `DirectoryUnavailable`, which names the HTTP status at most: never
  * the secret, the token, or a response body.
+ *
+ * Graph throttles the application, not one person. After a 429, a server
+ * error, a refused sign-in, or no answer, nothing is sent for anyone until
+ * the pause ends: the time `Retry-After` names, five minutes at most, or
+ * half a minute. Requests that need a token at the same time share one
+ * sign-in.
  */
 export function createEntraGroupDirectory(input: EntraGroupDirectoryInput): GroupDirectory {
   const graphOrigin = input.graphOrigin ?? defaultGraphOrigin;
   const loginOrigin = input.loginOrigin ?? defaultLoginOrigin;
   const timeoutMilliseconds = input.timeoutMilliseconds ?? defaultTimeoutMilliseconds;
+  const now = input.now ?? (() => Date.now());
   let token: AccessToken | null = null;
+  let signIn: Promise<string> | null = null;
+  let pausedUntil = 0;
 
-  const send = async (url: URL, init: RequestInit): Promise<Response> => {
-    try {
-      return await fetch(url, {...init, signal: AbortSignal.timeout(timeoutMilliseconds)});
-    } catch {
-      throw unavailable("did not answer");
-    }
+  const pause = (retryAfter: string | null): void => {
+    pausedUntil = now() + pauseMilliseconds(retryAfter);
   };
 
-  const accessToken = async (): Promise<string> => {
-    if (token !== null && token.expiresAt > Date.now()) return token.value;
+  const send = async (url: URL, init: RequestInit): Promise<Response> => {
+    if (now() < pausedUntil) throw unavailable("is not asked again until it has had time to recover");
+    let response: Response;
+    try {
+      response = await fetch(url, {...init, signal: AbortSignal.timeout(timeoutMilliseconds)});
+    } catch {
+      pause(null);
+      throw unavailable("did not answer");
+    }
+    if (response.status === 429 || response.status >= 500) pause(response.headers.get("Retry-After"));
+    return response;
+  };
+
+  const requestToken = async (): Promise<string> => {
     const response = await send(
       new URL(`/${encodeURIComponent(input.tenantId)}/oauth2/v2.0/token`, loginOrigin),
       {
@@ -89,25 +111,43 @@ export function createEntraGroupDirectory(input: EntraGroupDirectoryInput): Grou
         method: "POST",
       },
     );
-    if (!response.ok) throw unavailable(`refused the sign-in with status ${response.status}`);
+    if (!response.ok) {
+      // A refused sign-in fails the same way for every request that follows.
+      pause(response.headers.get("Retry-After"));
+      throw unavailable(`refused the sign-in with status ${response.status}`);
+    }
     const issued = await parseBody(response, tokenSchema);
     if (issued === null) throw unavailable("answered the sign-in in an unexpected form");
     token = {
-      expiresAt: Date.now() + issued.expires_in * 1_000 - tokenRenewalMarginMilliseconds,
+      expiresAt: now() + issued.expires_in * 1_000 - tokenRenewalMarginMilliseconds,
       value: issued.access_token,
     };
     return token.value;
   };
 
+  /** The current token, or the one sign-in under way for everyone who needs a new one. */
+  const accessToken = (): Promise<string> => {
+    if (token !== null && token.expiresAt > now()) return Promise.resolve(token.value);
+    signIn ??= requestToken().finally(() => {
+      signIn = null;
+    });
+    return signIn;
+  };
+
   /** One Graph read, retried once with a new token when Graph rejects the old one. */
   const read = async (url: URL): Promise<Response> => {
-    const request = async (): Promise<Response> => send(url, {
-      headers: {Authorization: `Bearer ${await accessToken()}`, ConsistencyLevel: "eventual"},
-    });
+    const request = async (): Promise<{readonly response: Response; readonly used: string}> => {
+      const used = await accessToken();
+      const response = await send(url, {
+        headers: {Authorization: `Bearer ${used}`, ConsistencyLevel: "eventual"},
+      });
+      return {response, used};
+    };
     const first = await request();
-    if (first.status !== 401) return first;
-    token = null;
-    return request();
+    if (first.response.status !== 401) return first.response;
+    // Another request may have renewed the token already; only the rejected one is dropped.
+    if (token?.value === first.used) token = null;
+    return (await request()).response;
   };
 
   const readPage = async <Page>(url: URL, schema: z.ZodType<Page>): Promise<Page> => {
@@ -193,6 +233,12 @@ async function parseBody<Body>(response: Response, schema: z.ZodType<Body>): Pro
   } catch {
     return null;
   }
+}
+
+/** How long to leave the directory alone: what it asked for in whole seconds, capped, or half a minute. */
+function pauseMilliseconds(retryAfter: string | null): number {
+  if (retryAfter === null || !/^\d{1,9}$/u.test(retryAfter)) return groupLookupBackoffMilliseconds;
+  return Math.min(Number(retryAfter) * 1_000, maximumPauseMilliseconds);
 }
 
 function unavailable(what: string): DirectoryUnavailable {

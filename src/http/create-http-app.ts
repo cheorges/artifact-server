@@ -256,8 +256,8 @@ const changeAccessSchema = z.object({
 const grantAddressesSchema = z.array(z.string().max(320)).max(100).default([]);
 /** A directory group named by its id and its exact name. */
 const grantGroupsSchema = z.array(z.object({
+  displayName: z.string().min(1).max(256),
   id: z.string().min(1).max(200),
-  name: z.string().min(1).max(256),
 }).strict()).max(100).default([]);
 const changeGrantsSchema = z.object({
   add: grantAddressesSchema,

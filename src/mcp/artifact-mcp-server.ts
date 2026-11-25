@@ -145,8 +145,8 @@ const artifactGrantListSchema = z.object({
 }).strict();
 const grantAddressesSchema = z.array(z.string().max(320)).max(100).default([]);
 const grantGroupsSchema = z.array(z.object({
+  displayName: z.string().min(1).max(256),
   id: z.string().min(1).max(200),
-  name: z.string().min(1).max(256),
 }).strict()).max(100).default([]);
 const directoryGroupSchema = z.object({
   displayName: z.string(),
@@ -1394,7 +1394,7 @@ export function createArtifactMcpServer(
     {
       title: "Share a restricted artifact with people and groups",
       description:
-        "Add or remove people, by exact email address, and directory groups, who may find, open, and comment on a restricted artifact. Only the owner or an administrator can change grants. Grants apply only while the artifact's access setting is restricted; call artifact_set_visibility with restricted to narrow access. People who are not members yet get access once they sign in with that email. Removing a person or a group ends their access at once. Name a group in addGroups or removeGroups by the exact id and name artifact_group_search returned and the person chose; never guess either, a name that is not the group's own is refused. Groups need an installation whose artifact_capabilities report sharing.groups.",
+        "Add or remove people, by exact email address, and directory groups, who may find, open, and comment on a restricted artifact. Only the owner or an administrator can change grants. Grants apply only while the artifact's access setting is restricted; call artifact_set_visibility with restricted to narrow access. People who are not members yet get access once they sign in with that email. Removing a person or a group ends their access at once. Name a group in addGroups or removeGroups by the exact id and displayName artifact_group_search returned and the person chose; never guess either, a displayName that is not the group's own is refused. Adding a group needs an installation whose artifact_capabilities report sharing.groups; removing one does not.",
       inputSchema: z.object({
         add: grantAddressesSchema,
         addGroups: grantGroupsSchema,
@@ -1430,7 +1430,7 @@ export function createArtifactMcpServer(
     {
       title: "Find directory groups to share with",
       description:
-        "Find groups of the installation's directory by the start of a word of their name, or by their exact mail address. Returns at most 10 groups with id, name, and mail address, never members. Show the person the exact names and let them choose before sharing with artifact_set_grants. Needs an installation whose artifact_capabilities report sharing.groups.",
+        "Find groups of the installation's directory by the start of a word of their name, or by their exact mail address. Returns at most 10 groups with id, displayName, and mail address, never members. Show the person the exact names and let them choose before sharing with artifact_set_grants. Needs an installation whose artifact_capabilities report sharing.groups.",
       inputSchema: z.object({query: z.string().max(400)}).strict(),
       outputSchema: z.object({groups: z.array(directoryGroupSchema)}).strict(),
       annotations: readOnlyAnnotations,

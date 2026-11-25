@@ -13,6 +13,8 @@ interface GroupsWithAccessProps {
   /** Share with one group; resolves to whether it worked. */
   readonly onAdd: (group: GroupReference) => Promise<boolean>;
   readonly onRemove: (group: GroupReference) => Promise<boolean>;
+  /** Whether the installation has a directory to search; without one, groups can only be removed. */
+  readonly searchable: boolean;
 }
 
 /** Shortest text the directory is asked about. */
@@ -32,13 +34,13 @@ const idle: SearchState = {kind: "idle"};
  * a group by the start of a word of its name or by its mail address, pick
  * it, and remove it again. Only groups are searched, never people.
  */
-export function GroupsWithAccess({applies, disabled, groups, onAdd, onRemove}: GroupsWithAccessProps) {
+export function GroupsWithAccess({applies, disabled, groups, onAdd, onRemove, searchable}: GroupsWithAccessProps) {
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<SearchState>(idle);
   const wanted = query.trim();
 
   useEffect(() => {
-    if (wanted.length < minimumSearchCharacters) {
+    if (!searchable || wanted.length < minimumSearchCharacters) {
       setSearch(idle);
       return undefined;
     }
@@ -61,10 +63,10 @@ export function GroupsWithAccess({applies, disabled, groups, onAdd, onRemove}: G
       current = false;
       clearTimeout(timer);
     };
-  }, [wanted]);
+  }, [searchable, wanted]);
 
   const pick = async (group: DirectoryGroup): Promise<void> => {
-    if (await onAdd({id: group.id, name: group.displayName})) setQuery("");
+    if (await onAdd({displayName: group.displayName, id: group.id})) setQuery("");
   };
   const shared = new Set(groups.map(({id}) => id));
   const options = search.kind === "found" ? search.groups.filter(({id}) => !shared.has(id)) : [];
@@ -72,15 +74,21 @@ export function GroupsWithAccess({applies, disabled, groups, onAdd, onRemove}: G
   return (
     <fieldset className="as-share-people" data-applies={applies}>
       <legend>Groups with access</legend>
-      <input
-        aria-label="Group name or address"
-        autoComplete="off"
-        disabled={disabled}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="Search groups by name or address"
-        type="text"
-        value={query}
-      />
+      {searchable ? (
+        <input
+          aria-label="Group name or address"
+          autoComplete="off"
+          disabled={disabled}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search groups by name or address"
+          type="text"
+          value={query}
+        />
+      ) : (
+        <p className="as-share-people__inactive">
+          Group sharing is switched off. These groups give no access now and can only be removed.
+        </p>
+      )}
       {search.kind === "failed" ? (
         <p className="as-share-message" data-tone="error" role="alert">{search.message}</p>
       ) : null}
@@ -107,9 +115,9 @@ export function GroupsWithAccess({applies, disabled, groups, onAdd, onRemove}: G
         <ul className="as-share-people__list">
           {groups.map((group) => (
             <li key={group.id}>
-              <span>{group.name}</span>
+              <span>{group.displayName}</span>
               <button
-                aria-label={`Remove ${group.name}`}
+                aria-label={`Remove ${group.displayName}`}
                 className="as-icon-button"
                 disabled={disabled}
                 onClick={() => void onRemove(group)}
@@ -121,9 +129,11 @@ export function GroupsWithAccess({applies, disabled, groups, onAdd, onRemove}: G
           ))}
         </ul>
       )}
-      <p className="as-share-people__note">
-        Everyone in a group can open and comment. Membership follows the directory within minutes.
-      </p>
+      {searchable ? (
+        <p className="as-share-people__note">
+          Everyone in a group can open and comment. Membership follows the directory within minutes.
+        </p>
+      ) : null}
     </fieldset>
   );
 }

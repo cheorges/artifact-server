@@ -676,7 +676,8 @@ const addActionGrantee = Effect.gen(function*() {
 
 /**
  * Let grants name directory groups and keep the name a group had when it was
- * added, and allow the two activity kinds that record it (decision 0034).
+ * added, and allow the two activity kinds that record it, whose rows carry
+ * the group's id as grantee and its name beside it (decision 0034).
  */
 const addGroupGrants = Effect.gen(function*() {
   const sql = yield* SqlClient;
@@ -688,6 +689,7 @@ const addGroupGrants = Effect.gen(function*() {
         CHECK (grantee_kind IN ('email', 'group'))`);
   yield* sql.unsafe(`
     ALTER TABLE actions
+      ADD COLUMN grantee_name TEXT,
       DROP CONSTRAINT actions_action_check,
       ADD CONSTRAINT actions_action_check
         CHECK (action IN (

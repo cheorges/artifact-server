@@ -53,6 +53,7 @@ const sharingRowsSchema = z.array(z.object({
   action: z.string(),
   authorizedByPrincipalId: z.string().nullable(),
   grantee: z.string().nullable(),
+  granteeName: z.string().nullable().optional(),
   idempotencyKey: z.string(),
   principalId: z.string(),
   versionId: z.string(),
@@ -516,10 +517,11 @@ describe("SQLite artifact grants", () => {
   });
   const groupRows = (artifactId: string) => sharingRowsSchema.parse(database.prepare(
     `SELECT action, authorized_by_principal_id AS authorizedByPrincipalId, grantee,
+            grantee_name AS granteeName,
             idempotency_key AS idempotencyKey, principal_id AS principalId, version_id AS versionId
      FROM actions WHERE artifact_id = ? AND action IN ('grant_group_add', 'grant_group_remove')
      ORDER BY action, grantee`,
-  ).all(artifactId)).map(({action, grantee}) => ({action, grantee}));
+  ).all(artifactId)).map(({action, grantee, granteeName}) => ({action, grantee, granteeName}));
 
   test("AUTH-040 foundation: a schema 16 database keeps its grants and accepts groups after the upgrade", async () => {
     const artifact = await publishRestricted("Upgrade target", "member_owner");
@@ -587,11 +589,11 @@ describe("SQLite artifact grants", () => {
     const artifact = await publishRestricted("Group sharing rows", "member_owner");
     await changeGroups(artifact, [dep], []);
     await changeGroups(artifact, [dep], ["g-absent"]);
-    expect(groupRows(artifact.artifactId)).toStrictEqual([{action: "grant_group_add", grantee: dep.displayName}]);
+    expect(groupRows(artifact.artifactId)).toStrictEqual([{action: "grant_group_add", grantee: dep.id, granteeName: dep.displayName}]);
     await changeGroups(artifact, [], ["g-dep"]);
     expect(groupRows(artifact.artifactId)).toStrictEqual([
-      {action: "grant_group_add", grantee: dep.displayName},
-      {action: "grant_group_remove", grantee: dep.displayName},
+      {action: "grant_group_add", grantee: dep.id, granteeName: dep.displayName},
+      {action: "grant_group_remove", grantee: dep.id, granteeName: dep.displayName},
     ]);
     const kinds = async (includeGrantChanges: boolean) => (await repository.listArtifactActions({
       artifactId: artifact.artifactId, cursor: null, includeGrantChanges, limit: 50, projectId: artifact.projectId,

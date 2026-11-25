@@ -41,6 +41,7 @@ import type {GitHistoryProviderHealthProbe} from
   "../../src/git-history/git-history-provider-health.js";
 import {managedApiKeyCredentialPattern} from
   "../../src/core/installation-identity.js";
+import type {GroupSharingConfiguration} from "../../src/core/group-directory.js";
 import type {ExternalIdentityAdmissionPolicy} from "../../src/core/installation-identity.js";
 import {
   browserLoginKinds,
@@ -48,6 +49,7 @@ import {
 } from "../../src/core/browser-access.js";
 import {createOidcIdentityProvider} from
   "../../src/identity/oidc-identity-provider.js";
+import {createFakeGroupDirectory} from "../support/fake-group-directory.js";
 import {
   startStubOidcLogin,
   startStubOidcProvider,
@@ -499,6 +501,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
         const statements = [
           "DROP TABLE artifact_grants",
           "ALTER TABLE actions DROP COLUMN grantee",
+          "ALTER TABLE actions DROP COLUMN grantee_name",
           `ALTER TABLE actions
             DROP CONSTRAINT actions_action_check,
             ADD CONSTRAINT actions_action_check
@@ -2269,6 +2272,8 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       await Promise.all([
         ["member_anna", anna, "member"],
         ["member_ben", "ben@example.test", "member"],
+        // Granted by address beside a group, to prove a group's removal leaves her content access.
+        ["member_cleo", "cleo@example.test", "member"],
         ["member_root", "root@example.test", "administrator"],
         // The owner's own address, to prove removing it keeps the owner's access.
         [owner, "owner@example.test", "member"],
@@ -2320,7 +2325,9 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
           projectId,
         })).items
           .filter(({grantee}) => grantee !== null)
-          .map(({action, authorizedByPrincipalId, grantee}) => ({action, authorizedByPrincipalId, grantee}))
+          .map(({action, authorizedByPrincipalId, grantee, granteeName}) => (granteeName === null
+            ? {action, authorizedByPrincipalId, grantee}
+            : {action, authorizedByPrincipalId, grantee, granteeName}))
           .toSorted((left, right) => `${left.action}${left.grantee}`.localeCompare(`${right.action}${right.grantee}`));
       const annaAdded = {action: "grant_add", authorizedByPrincipalId: null, grantee: anna};
       expect(await sharingRows(granted.body.artifact.id)).toStrictEqual([annaAdded]);
@@ -2442,7 +2449,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       const groupRows = async (artifactId: string, includeGrantChanges = true) =>
         (await sharingRows(artifactId, includeGrantChanges)).filter(({action}) => action.startsWith("grant_group_"));
       expect(await groupRows(switched.body.artifact.id)).toStrictEqual([
-        {action: "grant_group_add", authorizedByPrincipalId: null, grantee: dep.displayName},
+        {action: "grant_group_add", authorizedByPrincipalId: null, grantee: dep.id, granteeName: dep.displayName},
       ]);
       expect(await groupRows(switched.body.artifact.id, false)).toStrictEqual([]);
       expect(await repository.isArtifactGrantee(projectId, switched.body.artifact.id, "member_ben", ["g-dep"])).toBe(true);
@@ -2469,17 +2476,20 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
           `INSERT INTO content_sessions
              (installation_id, token_digest, principal_id, project_id, artifact_id, version_id,
               content_token, created_at, expires_at)
-           VALUES ($1, 'group-session-ben', 'member_ben', $2, $3, $4, 'group-token-ben', $5, '2999-01-01T00:00:00.000Z')`,
+           VALUES ($1, 'group-session-ben', 'member_ben', $2, $3, $4, 'group-token-ben', $5, '2999-01-01T00:00:00.000Z'),
+                  ($1, 'group-session-cleo', 'member_cleo', $2, $3, $4, 'group-token-cleo', $5, '2999-01-01T00:00:00.000Z')`,
           [grantInstallationId, projectId, switched.body.artifact.id, switched.body.version.id, changedAt],
         );
       }));
+      await change(switched.body.artifact.id, ["cleo@example.test"]);
       await changeGroups(switched.body.artifact.id, [], ["g-absent"]);
-      expect(await holders()).toStrictEqual([owner, owner, "member_ben"].toSorted());
+      expect(await holders()).toStrictEqual([owner, owner, "member_ben", "member_cleo"].toSorted());
+      // Removing the group ends Ben's access; Cleo is granted by address and keeps hers.
       await changeGroups(switched.body.artifact.id, [], ["g-dep"]);
-      expect(await holders()).toStrictEqual([owner, owner]);
+      expect(await holders()).toStrictEqual([owner, owner, "member_cleo"].toSorted());
       expect(await groupRows(switched.body.artifact.id)).toStrictEqual([
-        {action: "grant_group_add", authorizedByPrincipalId: null, grantee: dep.displayName},
-        {action: "grant_group_remove", authorizedByPrincipalId: null, grantee: dep.displayName},
+        {action: "grant_group_add", authorizedByPrincipalId: null, grantee: dep.id, granteeName: dep.displayName},
+        {action: "grant_group_remove", authorizedByPrincipalId: null, grantee: dep.id, granteeName: dep.displayName},
       ]);
       await changeGroups(granted.body.artifact.id, [dep]);
 
@@ -2504,6 +2514,109 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       }));
       expect(z.object({total: z.number()}).parse(remaining[0]).total).toBe(0);
     } finally {
+      await database.close();
+      await server.stop();
+    }
+  });
+
+  test("AUTH-040 foundation: a Postgres installation with a directory gives a signed-in group member the shared artifact", async () => {
+    expect.hasAssertions();
+    const previousClaims = {...oidcProvider.claims};
+    const identity = {
+      apiToken: managedTestKey("postgres-group-directory"),
+      installationId: `postgres-group-directory-${randomUUID()}`,
+    };
+    const provider = `oidc:${oidcProvider.issuer}`;
+    const dep = {displayName: "Developer Productivity", id: "g-dep"};
+    const directory = createFakeGroupDirectory();
+    directory.addGroup({...dep, mail: "dep@example.test"}, ["postgres-group-member"]);
+    const server = await startInProcessExternalStorageServer(environment, identity, {
+      externalIdentityAdmissionPolicy: {allowedEmailDomains: [], provider},
+      groupSharing: {directory, identityProvider: provider},
+    });
+    const database = await PostgresDatabase.open({
+      maxConnections: 2,
+      url: Redacted.make(environment.databaseUrl),
+    }, "validate");
+    try {
+      oidcProvider.claims.email = oidcAdministratorEmail;
+      oidcProvider.claims.subject = "postgres-group-administrator";
+      oidcProvider.claims.emailVerified = true;
+      expect((await oidcBrowserLogin(server.baseUrl)).status).toBe(303);
+      const signIn = async (email: string, subject: string) => {
+        oidcProvider.claims.email = email;
+        oidcProvider.claims.subject = subject;
+        const login = await oidcBrowserLogin(server.baseUrl);
+        expect(login.status).toBe(303);
+        const headers = {Cookie: applicationCookies(login.headers.getSetCookie()).header};
+        const session = await fetch(`${server.baseUrl}/api/v1/session`, {headers});
+        const {capabilities, principal} = z.object({
+          capabilities: z.object({groupSharing: z.boolean()}),
+          principal: z.object({id: z.string()}),
+        }).parse(await session.json());
+        return {groupSharing: capabilities.groupSharing, headers, id: principal.id};
+      };
+      const member = await signIn("member@ackstorm.com", "postgres-group-member");
+      const outsider = await signIn("outsider@ackstorm.com", "postgres-group-outsider");
+      expect(member.groupSharing).toBe(true);
+
+      // The subject the provider bound is read back per member and provider.
+      const identities = new PostgresIdentityRepository(database, identity.installationId);
+      expect(await identities.findExternalSubject(identity.installationId, provider, member.id))
+        .toBe("postgres-group-member");
+      expect(await identities.findExternalSubject(identity.installationId, "oidc:https://other.example.test", member.id))
+        .toBeNull();
+      expect(await identities.findExternalSubject(identity.installationId, provider, "member_unknown")).toBeNull();
+
+      const published = await publishNew(server.baseUrl, identity.apiToken, {
+        content: "<p>team plan</p>",
+        idempotencyKey: `group-directory-${randomUUID()}`,
+        name: "Team plan",
+      });
+      const owner = managedTestPrincipal(identity.apiToken).principalId;
+      const changedAt = "2026-11-13T00:00:00.000Z";
+      const repository = await PostgresArtifactRepository.open(database, identity.installationId);
+      await repository.changeAccessSetting({
+        accessSetting: "restricted",
+        artifactId: published.body.artifact.id,
+        authorizedByPrincipalId: null,
+        createdAt: changedAt,
+        expectedCurrentVersionId: published.body.version.id,
+        idempotencyKey: `group-directory-restrict-${randomUUID()}`,
+        inputDigest: "group-directory-restrict",
+        principalId: owner,
+        projectId: published.body.artifact.projectId,
+      });
+      await repository.changeArtifactGrants({
+        add: [],
+        addGroups: [dep],
+        artifactId: published.body.artifact.id,
+        authorizedByPrincipalId: null,
+        changedAt,
+        principalId: owner,
+        projectId: published.body.artifact.projectId,
+        remove: [],
+        removeGroups: [],
+      });
+
+      // Session, bound subject, directory, and the grant query meet in the running server.
+      const sharedWith = async (headers: {readonly Cookie: string}) => {
+        const listed = await fetch(`${server.baseUrl}/api/v1/artifacts?scope=shared_with_me`, {headers});
+        expect(listed.status).toBe(200);
+        return z.object({artifacts: z.array(z.object({artifact: z.object({name: z.string()})}))})
+          .parse(await listed.json()).artifacts.map(({artifact}) => artifact.name);
+      };
+      const open = async (headers: {readonly Cookie: string}) =>
+        (await fetch(`${server.baseUrl}/api/v1/artifacts/${published.body.artifact.id}`, {headers})).status;
+      expect(await sharedWith(member.headers)).toStrictEqual(["Team plan"]);
+      expect(await open(member.headers)).toBe(200);
+      expect(await sharedWith(outsider.headers)).toStrictEqual([]);
+      expect(await open(outsider.headers)).not.toBe(200);
+      const found = await fetch(`${server.baseUrl}/api/v1/directory/groups?query=devel`, {headers: member.headers});
+      expect(z.object({groups: z.array(z.object({id: z.string()}))}).parse(await found.json()).groups)
+        .toStrictEqual([{id: dep.id}]);
+    } finally {
+      Object.assign(oidcProvider.claims, previousClaims);
       await database.close();
       await server.stop();
     }
@@ -3284,6 +3397,7 @@ async function startInProcessExternalStorageServer(
     readonly gitHistory?: NodeGitHistoryConfiguration;
     readonly gitHistoryHealthProbe?: GitHistoryProviderHealthProbe;
     readonly externalIdentityAdmissionPolicy?: ExternalIdentityAdmissionPolicy;
+    readonly groupSharing?: GroupSharingConfiguration;
   } = {},
 ): Promise<InProcessExternalStorageServer> {
   const server = await startExternalStorageServer({

@@ -5,7 +5,7 @@
 
 Extends 0033. Person grants and artifacts that are not `restricted` keep
 their behavior. An installation without a directory keeps the behavior of
-0033 and refuses group grants.
+0033 and refuses new group grants.
 
 ## Decision
 
@@ -24,7 +24,8 @@ had when it was added. The id decides access; the name is what people read.
 | Member of a granted group lists, reads, opens content, compares, comments | allowed |
 | Member of a granted group manages the artifact in any way | refused, as for a grantee in 0033 |
 | Directory cannot be asked, or answers anything unexpected | no access through groups; person grants, ownership and administration are unaffected |
-| Group grant on an installation without a directory | refused |
+| Adding a group on an installation without a directory | refused |
+| Removing a stored group on an installation without a directory | allowed |
 
 ## Recorded decisions
 
@@ -39,11 +40,17 @@ required for sign-in an assigned group's members could also sign in.
 
 ### Ids decide, names label
 
-A change names a group by its id and its exact name. The server reads the
-group from the directory and refuses a name that differs, so the name a
-person confirmed is the group that gets access. A group renamed later keeps
-giving access by id and keeps its stored name; a group deleted from the
-directory gives nobody access and can still be removed from the artifact.
+A change names a group by its `id` and its exact `displayName`, the fields
+the group search answers. The server reads the group from the directory and
+refuses a name that differs, so the name a person confirmed is the group that
+gets access. A group renamed later keeps giving access by id and keeps its
+stored name; a group deleted from the directory gives nobody access and can
+still be removed from the artifact.
+
+Removing a group needs no directory. When group sharing is switched off,
+stored group grants give nobody access, still count toward the cap, stay
+visible to the owner and administrators, and can be removed; they apply
+again when the directory returns.
 
 ### Membership is remembered for five minutes
 
@@ -58,14 +65,29 @@ everyone but its owner and the people granted by address.
 ### Fail closed
 
 Any directory error, timeout, or unexpected answer counts as "member of no
-group" for a read and refuses a change. It is never remembered as a
+group" for a read and refuses an addition. It is never remembered as a
 membership. A caller whose lookup failed is treated as a member of no group
 for 30 seconds before the directory is asked again, and requests that arrive
 together share one lookup, so a slow or refusing directory is not asked on
-every request and does not slow everyone down. The reason of every failure,
-an HTTP status at most, goes to the application log. Listing one's own
-artifacts, and an administrator's listings other than "Shared with me", never
-ask the directory.
+every request and does not slow everyone down. No request waits longer than
+10 seconds for a lookup: a slower one counts as failed, and its answer is
+still remembered when it arrives. The reason of every failure, an HTTP status
+at most, goes to the application log.
+
+The directory is asked only when the answer can matter. A grant by address
+is checked first and without the directory, so a person granted by address
+never waits on it. Listing one's own artifacts, and an administrator's
+listings other than "Shared with me", never ask the directory.
+
+### The directory is left alone after it fails
+
+The directory throttles the application as a whole, not one person. After
+status 429, a server error, a refused sign-in, or no answer, the adapter
+sends nothing for anyone until a pause ends: the time the directory names in
+`Retry-After`, five minutes at most, or 30 seconds. Group access stays closed
+during the pause. A refusal that concerns one request, such as 403 or 404,
+pauses nothing. Requests that need a new token at the same time share one
+sign-in.
 
 ### Groups share the cap
 
@@ -74,15 +96,18 @@ People and groups together are bounded by the 100 grants of 0033.
 ### Sharing changes are recorded
 
 Adding or removing a group writes one activity row per group
-(`grant_group_add`, `grant_group_remove`) naming the group, under the rules
-of 0033's "Sharing changes are recorded": only real changes, in the same
-transaction, visible to the owner and administrators only.
+(`grant_group_add`, `grant_group_remove`), under the rules of 0033's "Sharing
+changes are recorded": only real changes, in the same transaction, visible to
+the owner and administrators only. The row carries the group's directory id
+as `grantee` and the name the group is shared under as `granteeName`.
+Directory names are neither unique nor fixed, so the id is what ties a row
+to the group that got access.
 
 ### Group search
 
 A signed-in member can search groups by the start of a word of the name, or
-by an exact mail address, and receives at most 10 groups with id, name, and
-mail address. Members are never searched and member lists are never
+by an exact mail address, and receives at most 10 groups with `id`,
+`displayName`, and mail address. Members are never searched and member lists are never
 returned (0033). Service principals cannot search. Groups whose membership
 the directory hides are not offered. Group names are visible to every member
 through this search; that was accepted for this installation.
@@ -93,7 +118,7 @@ The search needs a signed-in member and at least two characters, and the
 browser asks only after typing pauses. There is no limit per person beyond
 that. A member or an agent with a member's key who sends very many searches
 can make the directory throttle the application; group access then stays
-closed, as for any directory failure, until the directory answers again. That
+closed for everyone until the pause after the throttling ends. That
 was accepted for an installation of signed-in colleagues; a per-person limit
 is the answer if it happens.
 
@@ -109,9 +134,11 @@ grants.
 Membership is read with the per-member call
 (`/users/{id}/transitiveMemberOf`), which the permission table lists as
 allowed for `GroupMember.Read.All`. It cannot be tried before the consent is
-granted. If the directory refuses it, group access stays closed, and the
-adapter switches to the group-side call (`/groups/{id}/transitiveMembers`
-for the granted groups) behind the same port.
+granted. If the directory refuses it, group access stays closed until the
+adapter reads membership with the group-side call
+(`/groups/{id}/transitiveMembers`). That call answers "who is in this group",
+not "which groups is this person in", so the switch also changes the port's
+membership method and its caller; it is a code change, not a setting.
 
 ## Conformance
 

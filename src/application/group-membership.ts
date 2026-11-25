@@ -2,6 +2,7 @@ import {Effect} from "effect";
 
 import {
   groupLookupBackoffMilliseconds,
+  groupLookupDeadlineMilliseconds,
   groupMembershipCacheMilliseconds,
   type GroupDirectory,
 } from "../core/group-directory.js";
@@ -18,6 +19,8 @@ export interface GroupMembership {
 
 /** What {@link createGroupMembership} is built from. */
 export interface GroupMembershipInput {
+  /** How long a request waits for one lookup; tests shorten it. */
+  readonly deadlineMilliseconds?: number;
   /** The installation's directory, or null when it has none. */
   readonly directory: GroupDirectory | null;
   /** Milliseconds since the epoch, from the application clock. */
@@ -44,15 +47,27 @@ type Lookup =
  * visibility and listing never ask the directory per artifact. A failed
  * lookup is never remembered as a membership: the principal counts as a
  * member of no group, and the directory is asked again after half a minute.
- * Requests that arrive together share one lookup.
+ * Requests that arrive together share one lookup, and none waits longer than
+ * the deadline: a slower lookup counts as failed, and its answer is still
+ * remembered when it arrives.
  */
 export function createGroupMembership(input: GroupMembershipInput): GroupMembership {
   const {directory} = input;
   if (directory === null) return {groupIdsOf: () => Effect.succeed([])};
   const remembered = new Map<string, RememberedGroups>();
   const running = new Map<string, Promise<Lookup>>();
+  const deadlineMilliseconds = input.deadlineMilliseconds ?? groupLookupDeadlineMilliseconds;
 
-  const lookUp = async (principalId: string): Promise<Lookup> => {
+  /** Treat the principal as a member of no group until the back-off ends. */
+  const backOff = (principalId: string): void => {
+    remembered.set(principalId, {
+      expiresAt: input.now() + groupLookupBackoffMilliseconds,
+      groupIds: [],
+    });
+  };
+
+  /** Ask the directory and remember what it says, however long it takes. */
+  const ask = async (principalId: string): Promise<Lookup> => {
     try {
       const subject = await input.subjectOf(principalId);
       const groupIds = subject === null ? [] : await directory.groupIdsOfSubject(subject);
@@ -62,15 +77,27 @@ export function createGroupMembership(input: GroupMembershipInput): GroupMembers
       });
       return {groupIds, kind: "found"};
     } catch (cause) {
-      remembered.set(principalId, {
-        expiresAt: input.now() + groupLookupBackoffMilliseconds,
-        groupIds: [],
-      });
+      backOff(principalId);
       return {
         kind: "failed",
         reason: cause instanceof Error ? cause.message : "The lookup failed.",
       };
     }
+  };
+
+  /** One lookup as the waiting requests see it: the answer, or a failure at the deadline. */
+  const lookUp = (principalId: string): Promise<Lookup> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<Lookup>((resolve) => {
+      timer = setTimeout(() => {
+        backOff(principalId);
+        resolve({kind: "failed", reason: "The directory did not answer in time."});
+      }, deadlineMilliseconds);
+    });
+    const answered = ask(principalId).finally(() => {
+      clearTimeout(timer);
+    });
+    return Promise.race([answered, late]);
   };
 
   /** The lookup already under way for this principal, or a new one. */

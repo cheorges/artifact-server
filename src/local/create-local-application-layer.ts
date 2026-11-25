@@ -259,15 +259,30 @@ export function createApplicationLayer(
         principalId,
       ),
   });
+  const isGrantee = (
+    projectId: string,
+    artifactId: string,
+    principalId: string,
+    groupIds: readonly string[],
+  ) => Effect.tryPromise({
+    try: () => adapters.repository.isArtifactGrantee(projectId, artifactId, principalId, groupIds),
+    catch: (cause) => repositoryFailure("isArtifactGrantee", cause),
+  });
   // One grant lookup for every service that decides restricted visibility:
   // a grant by address, or a grant to one of the caller's directory groups.
+  // The address is checked first and without the directory, so a person
+  // granted by address never waits on it (decision 0034).
   const grants: ArtifactGrantLookup = {
     isArtifactGrantee: (projectId, artifactId, principalId) =>
-      groupMembership.groupIdsOf(principalId).pipe(
-        Effect.flatMap((groupIds) => Effect.tryPromise({
-          try: () => adapters.repository.isArtifactGrantee(projectId, artifactId, principalId, groupIds),
-          catch: (cause) => repositoryFailure("isArtifactGrantee", cause),
-        })),
+      isGrantee(projectId, artifactId, principalId, []).pipe(
+        Effect.flatMap((byAddress) => {
+          if (byAddress || groupSharing === null) return Effect.succeed(byAddress);
+          return groupMembership.groupIdsOf(principalId).pipe(
+            Effect.flatMap((groupIds) => groupIds.length === 0
+              ? Effect.succeed(false)
+              : isGrantee(projectId, artifactId, principalId, groupIds)),
+          );
+        }),
       ),
   };
   const groups: GroupSharing = {

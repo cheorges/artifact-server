@@ -271,6 +271,7 @@ const artifactActionRowSchema = z.object({
   authorizedByPrincipalId: z.string().nullable(),
   createdAt: z.string(),
   grantee: z.string().nullable(),
+  granteeName: z.string().nullable(),
   id: z.string(),
   idempotencyKey: z.string(),
   principalId: z.string(),
@@ -278,7 +279,7 @@ const artifactActionRowSchema = z.object({
   versionId: z.string(),
 });
 const grantCountRowSchema = z.object({count: z.number().int().nonnegative()});
-const removedGroupRowSchema = z.object({displayName: z.string()});
+const removedGroupRowSchema = z.object({displayName: z.string().nullable()});
 
 /** The grant table as schema 17 creates it, under the given table name. */
 function artifactGrantsTableSql(name: "artifact_grants" | "artifact_grants_next"): string {
@@ -1780,7 +1781,7 @@ export class SqliteArtifactRepository implements
           );
           if (Number(added.changes) === 1) {
             this.#insertSharingAction(
-              command, currentVersionId, artifactActionKinds.grantGroupAdd, group.displayName,
+              command, currentVersionId, artifactActionKinds.grantGroupAdd, group.id, group.displayName,
             );
           }
         }
@@ -1795,7 +1796,7 @@ export class SqliteArtifactRepository implements
           if (removed !== undefined) {
             groupRemoved = true;
             this.#insertSharingAction(
-              command, currentVersionId, artifactActionKinds.grantGroupRemove, removed.displayName,
+              command, currentVersionId, artifactActionKinds.grantGroupRemove, groupId, removed.displayName,
             );
           }
         }
@@ -2197,7 +2198,8 @@ export class SqliteArtifactRepository implements
             authorized_by_principal_id AS authorizedByPrincipalId,
             idempotency_key AS idempotencyKey,
             created_at AS createdAt,
-            grantee
+            grantee,
+            grantee_name AS granteeName
            FROM actions
            WHERE project_id = ? AND artifact_id = ?
              AND (? = 1 OR action NOT IN (${sharingActionKindsSql}))
@@ -3114,14 +3116,15 @@ export class SqliteArtifactRepository implements
     authorizedByPrincipalId: string | null,
     actionId: string | null = null,
     grantee: string | null = null,
+    granteeName: string | null = null,
   ): void {
     this.#database
       .prepare(
         `INSERT INTO actions (
           id, project_id, artifact_id, version_id, action, principal_id,
-          authorized_by_principal_id, idempotency_key, created_at, grantee
+          authorized_by_principal_id, idempotency_key, created_at, grantee, grantee_name
         ) VALUES (
-          COALESCE(?, lower(hex(randomblob(16)))), ?, ?, ?, ?, ?, ?, ?, ?, ?
+          COALESCE(?, lower(hex(randomblob(16)))), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )`,
       )
       .run(
@@ -3135,6 +3138,7 @@ export class SqliteArtifactRepository implements
         idempotencyKey,
         createdAt,
         grantee,
+        granteeName,
       );
   }
 
@@ -5025,7 +5029,8 @@ export class SqliteArtifactRepository implements
         authorized_by_principal_id TEXT,
         idempotency_key TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        grantee TEXT
+        grantee TEXT,
+        grantee_name TEXT
       ) STRICT;
 
       CREATE TABLE IF NOT EXISTS staged_uploads (
@@ -5137,6 +5142,7 @@ export class SqliteArtifactRepository implements
     this.#addArtifactOwnerIfMissing();
     this.#addArtifactGrantsIfMissing();
     this.#addActionGranteeIfMissing();
+    this.#addActionGranteeNameIfMissing();
     this.#database.exec(`
       CREATE INDEX IF NOT EXISTS projects_active_created
         ON projects (archived_at, created_at, id);
@@ -5227,7 +5233,11 @@ export class SqliteArtifactRepository implements
     return {currentVersionId: row.currentVersionId, restricted: row.restricted === 1};
   }
 
-  /** One activity row naming the address or group a grant change added or removed (AUTH-039, AUTH-040). */
+  /**
+   * One activity row naming the address or group a grant change added or
+   * removed (AUTH-039, AUTH-040). A group row carries the group's id as its
+   * grantee and the name the group is shared under beside it.
+   */
   #insertSharingAction(
     command: ChangeArtifactGrants,
     versionId: string,
@@ -5237,6 +5247,7 @@ export class SqliteArtifactRepository implements
       | typeof artifactActionKinds.grantGroupRemove
       | typeof artifactActionKinds.grantRemove,
     grantee: string,
+    granteeName: string | null = null,
   ): void {
     this.#insertAction(
       command.projectId,
@@ -5249,6 +5260,7 @@ export class SqliteArtifactRepository implements
       command.authorizedByPrincipalId,
       null,
       grantee,
+      granteeName,
     );
   }
 
@@ -5826,6 +5838,12 @@ export class SqliteArtifactRepository implements
   #addActionGranteeIfMissing(): void {
     if (this.#tableColumns("actions").includes("grantee")) return;
     this.#database.exec("ALTER TABLE actions ADD COLUMN grantee TEXT");
+  }
+
+  /** Keep a group's name beside its id on group sharing rows (schema 17). */
+  #addActionGranteeNameIfMissing(): void {
+    if (this.#tableColumns("actions").includes("grantee_name")) return;
+    this.#database.exec("ALTER TABLE actions ADD COLUMN grantee_name TEXT");
   }
 
   #addActionAuthorizerColumnIfMissing(): void {

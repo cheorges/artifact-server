@@ -121,4 +121,14 @@ describe("status-inclusive admission lookups", () => {
       "installation-one", "oidc:https://issuer-one.example.test", "missing-subject",
     )).resolves.toBeNull();
   });
+
+  test("AUTH-040 foundation: the subject a provider bound to a member is read per installation, provider, and member", async () => {
+    const issuer = "oidc:https://issuer-one.example.test";
+    await expect(repository.findExternalSubject("installation-one", issuer, "member-one"))
+      .resolves.toBe("subject-one");
+    await expect(repository.findExternalSubject("installation-one", "oidc:https://issuer-two.example.test", "member-one"))
+      .resolves.toBeNull();
+    await expect(repository.findExternalSubject("installation-two", issuer, "member-one")).resolves.toBeNull();
+    await expect(repository.findExternalSubject("installation-one", issuer, "member-unknown")).resolves.toBeNull();
+  });
 });
