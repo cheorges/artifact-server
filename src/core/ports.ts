@@ -218,6 +218,12 @@ export type RestrictedArtifactScope =
   | {readonly kind: "owned"; readonly principalId: string}
   | {readonly kind: "owned_or_granted"; readonly principalId: string};
 
+/**
+ * The restricted artifacts whose threads an agent dispatch may carry. Grants
+ * never widen it: a grantee does not dispatch (AUTH-037).
+ */
+export type RestrictedDispatchScope = Exclude<RestrictedArtifactScope, {readonly kind: "owned_or_granted"}>;
+
 /** Values used to read one bounded page of active artifacts. */
 export interface ListArtifacts {
   readonly comments: "all" | "with" | "without";
@@ -498,7 +504,7 @@ export interface CreateAgentDispatch {
   readonly note: string | null;
   readonly projectId: string;
   /** Threads of restricted artifacts outside this scope count as missing. */
-  readonly restrictedScope: RestrictedArtifactScope;
+  readonly restrictedScope: RestrictedDispatchScope;
   readonly sender: CommentAuthor;
   readonly threadIds: readonly string[];
 }

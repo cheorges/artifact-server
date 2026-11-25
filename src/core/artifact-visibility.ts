@@ -1,13 +1,13 @@
 import {Effect} from "effect";
 
-import {ArtifactNotFound, AuthorizationDenied} from "./errors.js";
+import {AuthorizationDenied} from "./errors.js";
 import {
   isHumanAdministrator,
   principalKinds,
   type Principal,
 } from "./identity.js";
 import {accessSettings, type ArtifactRecord} from "./model.js";
-import type {RestrictedArtifactScope} from "./ports.js";
+import type {RestrictedArtifactScope, RestrictedDispatchScope} from "./ports.js";
 
 /**
  * Report whether one principal may see an artifact at all.
@@ -39,19 +39,6 @@ export function needsGrantLookup(
     !ownsArtifact(principal, artifact);
 }
 
-/**
- * Fail exactly like a missing artifact when the principal may not see it
- * without a grant: the owner and administrators only, for a restricted one.
- */
-export function requireArtifactVisible(
-  principal: Principal,
-  artifact: Pick<ArtifactRecord, "accessSetting" | "ownerPrincipalId">,
-): Effect.Effect<void, ArtifactNotFound> {
-  return canSeeArtifact(principal, artifact, false)
-    ? Effect.void
-    : Effect.fail(new ArtifactNotFound({message: "The artifact does not exist."}));
-}
-
 /** Refuse management of a restricted artifact to anyone but its owner or an administrator. */
 export function requireRestrictedManagement(
   principal: Principal,
@@ -60,7 +47,7 @@ export function requireRestrictedManagement(
   return artifact.accessSetting !== accessSettings.restricted || mayChangeRestriction(principal, artifact)
     ? Effect.void
     : Effect.fail(new AuthorizationDenied({
-      message: "Only the owner or an administrator can change who sees this artifact.",
+      message: "Only the owner or an administrator can manage this artifact.",
     }));
 }
 
@@ -105,7 +92,7 @@ export function restrictedArtifactScope(
 /** The restricted artifacts whose threads one principal may dispatch: own ones only. */
 export function restrictedDispatchScope(
   principal: Principal,
-): RestrictedArtifactScope {
+): RestrictedDispatchScope {
   if (isHumanAdministrator(principal)) return {kind: "all"};
   if (principal.kind === principalKinds.human) {
     return {kind: "owned", principalId: principal.id};

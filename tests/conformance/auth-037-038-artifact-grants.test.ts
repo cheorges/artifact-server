@@ -204,6 +204,8 @@ describe("grants to persons on restricted artifacts", () => {
       request(ben, "GET", `${draft.id}/grants`),
     ]);
     expect(refusals.map(({status}) => status)).toStrictEqual(refusals.map(() => 403));
+    // The refusal names what the grantee lacks, whatever they tried to change.
+    expect(await refusals[0]?.text()).toContain("Only the owner or an administrator can manage this artifact.");
     const refusedOverMcp = await callToolResult(ben, "artifact_set_grants", {
       add: ["carl@example.test"],
       artifactId: draft.id,
@@ -216,7 +218,7 @@ describe("grants to persons on restricted artifacts", () => {
       expectedCurrentVersionId: draft.currentVersionId,
       idempotencyKey: "auth-037-grantee-version",
       projectId: draft.projectId,
-    })).rejects.toThrow("HTTP 403");
+    })).rejects.toThrow("can manage this artifact");
     const thread = await commentOn(ben, draft.id, draft.currentVersionId);
 
     // Commenting is shared; removing someone else's review is not.
