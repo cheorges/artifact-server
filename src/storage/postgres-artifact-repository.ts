@@ -190,6 +190,12 @@ const artifactActionKindSchema = z.enum([
   artifactActionKinds.restore,
 ]);
 const nonnegativeIntegerSchema = z.coerce.number().int().nonnegative();
+/** A live artifact a grant change applies to: its setting and current version. */
+interface LiveGrantTarget {
+  readonly currentVersionId: string;
+  readonly restricted: boolean;
+}
+const liveGrantTargetRowSchema = z.object({currentVersionId: z.string(), restricted: z.boolean()});
 const positiveIntegerSchema = z.coerce.number().int().positive();
 const gitHistoryJobRowSchema = z.object({
   artifactId: z.string(),
@@ -1527,21 +1533,52 @@ export class PostgresArtifactRepository implements
       const sql = yield* SqlClient;
       return yield* sql.withTransaction(Effect.gen({self: this}, function*() {
         // The row lock serializes grant changes on one artifact, so the cap holds.
-        const active = yield* this.#lockLiveRestrictedFlag(command.projectId, command.artifactId);
-        yield* Effect.forEach(command.add, (email) => sql.unsafe(
-          `INSERT INTO artifact_grants
-             (installation_id, artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
-           VALUES ($1, $2, 'email', $3, $4, $5)
-           ON CONFLICT DO NOTHING`,
-          [installationId, command.artifactId, email, command.principalId, command.changedAt],
-        ), {discard: true});
+        const {currentVersionId, restricted: active} = yield* this.#lockLiveGrantTarget(
+          command.projectId,
+          command.artifactId,
+        );
+        // One activity row per address a change really adds or removes (AUTH-039).
+        const recordSharing = (
+          action: typeof artifactActionKinds.grantAdd | typeof artifactActionKinds.grantRemove,
+          grantee: string,
+        ) => sql.unsafe(
+          `INSERT INTO actions (
+             installation_id, project_id, id, artifact_id, version_id, action, principal_id,
+             authorized_by_principal_id, idempotency_key, created_at, grantee
+           ) VALUES ($1, $2, gen_random_uuid()::text, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            installationId,
+            command.projectId,
+            command.artifactId,
+            currentVersionId,
+            action,
+            command.principalId,
+            command.authorizedByPrincipalId,
+            `${action}:${crypto.randomUUID().replaceAll("-", "")}`,
+            command.changedAt,
+            grantee,
+          ],
+        );
+        yield* Effect.forEach(command.add, (email) => Effect.gen(function*() {
+          const inserted = yield* sql.unsafe<object>(
+            `INSERT INTO artifact_grants
+               (installation_id, artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
+             VALUES ($1, $2, 'email', $3, $4, $5)
+             ON CONFLICT DO NOTHING
+             RETURNING grantee`,
+            [installationId, command.artifactId, email, command.principalId, command.changedAt],
+          );
+          if (inserted.length > 0) yield* recordSharing(artifactActionKinds.grantAdd, email);
+        }), {discard: true});
         yield* Effect.forEach(command.remove, (email) => Effect.gen(function*() {
-          yield* sql.unsafe(
+          const removed = yield* sql.unsafe<object>(
             `DELETE FROM artifact_grants
              WHERE installation_id = $1 AND artifact_id = $2
-               AND grantee_kind = 'email' AND grantee = $3`,
+               AND grantee_kind = 'email' AND grantee = $3
+             RETURNING grantee`,
             [installationId, command.artifactId, email],
           );
+          if (removed.length > 0) yield* recordSharing(artifactActionKinds.grantRemove, email);
           if (!active) return;
           yield* Effect.forEach(["content_sessions", "content_bootstraps"] as const, (table) => sql.unsafe(
             `DELETE FROM ${table}
@@ -1689,33 +1726,37 @@ export class PostgresArtifactRepository implements
 
   /** Whether a live artifact is restricted; fails like a missing artifact otherwise. */
   #requireLiveRestrictedFlag(projectId: string, artifactId: string) {
-    return this.#selectLiveRestrictedFlag(projectId, artifactId, "");
+    return this.#selectLiveGrantTarget(projectId, artifactId, "").pipe(
+      Effect.map(({restricted}) => restricted),
+    );
   }
 
   /**
-   * Like {@link #requireLiveRestrictedFlag}, and lock the artifact row until the
-   * transaction ends, so concurrent grant changes count against the cap in turn.
+   * Whether a live artifact is restricted and its current version, locking the
+   * artifact row until the transaction ends, so concurrent grant changes count
+   * against the cap in turn; fails like a missing artifact otherwise.
    */
-  #lockLiveRestrictedFlag(projectId: string, artifactId: string) {
-    return this.#selectLiveRestrictedFlag(projectId, artifactId, "FOR UPDATE");
+  #lockLiveGrantTarget(projectId: string, artifactId: string) {
+    return this.#selectLiveGrantTarget(projectId, artifactId, "FOR UPDATE");
   }
 
-  /** The query behind {@link #requireLiveRestrictedFlag} and {@link #lockLiveRestrictedFlag}. */
-  #selectLiveRestrictedFlag(projectId: string, artifactId: string, locking: "" | "FOR UPDATE") {
+  /** The query behind {@link #requireLiveRestrictedFlag} and {@link #lockLiveGrantTarget}. */
+  #selectLiveGrantTarget(projectId: string, artifactId: string, locking: "" | "FOR UPDATE") {
     const installationId = this.#installationId;
     return Effect.gen(function*() {
       const sql = yield* SqlClient;
       const rows = yield* sql.unsafe<object>(
-        `SELECT restricted FROM artifacts
+        `SELECT current_version_id AS "currentVersionId", restricted FROM artifacts
          WHERE installation_id = $1 AND project_id = $2 AND id = $3 AND deleted_at IS NULL
          ${locking}`,
         [installationId, projectId, artifactId],
       );
-      const row = z.object({restricted: z.boolean()}).nullable().parse(rows[0] ?? null);
+      const row = liveGrantTargetRowSchema.nullable().parse(rows[0] ?? null);
       if (row === null) {
         return yield* new ArtifactNotFound({message: "The artifact does not exist."});
       }
-      return row.restricted;
+      const target: LiveGrantTarget = row;
+      return target;
     });
   }
 

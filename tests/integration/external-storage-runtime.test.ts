@@ -2232,7 +2232,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
     }
   });
 
-  test("AUTH-037 AUTH-038 foundation: Postgres grants widen restricted listings, end removed members' content access, hold the cap, and survive concurrent adds", async () => {
+  test("AUTH-037 AUTH-038 AUTH-039 foundation: Postgres grants widen restricted listings, end removed members' content access, hold the cap, survive concurrent adds, and record one sharing row per real change", async () => {
     expect.hasAssertions();
     const ownerIdentity = {
       apiToken: managedTestKey("postgres-grants"),
@@ -2307,6 +2307,21 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna")).toBe(true);
       expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_ben")).toBe(false);
 
+      // The two concurrent adds of one address write one sharing row.
+      const sharingRows = async (artifactId: string, includeGrantChanges = true) =>
+        (await repository.listArtifactActions({
+          artifactId,
+          cursor: null,
+          includeGrantChanges,
+          limit: 100,
+          projectId,
+        })).items
+          .filter(({grantee}) => grantee !== null)
+          .map(({action, authorizedByPrincipalId, grantee}) => ({action, authorizedByPrincipalId, grantee}))
+          .toSorted((left, right) => `${left.action}${left.grantee}`.localeCompare(`${right.action}${right.grantee}`));
+      const annaAdded = {action: "grant_add", authorizedByPrincipalId: null, grantee: anna};
+      expect(await sharingRows(granted.body.artifact.id)).toStrictEqual([annaAdded]);
+
       const listedFor = async (
         restrictedScope: Parameters<typeof repository.listArtifacts>[0]["restrictedScope"],
         sharedWithPrincipalId: string | null = null,
@@ -2338,6 +2353,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       )).rejects.toMatchObject({_tag: "GrantLimitReached"});
       expect((await repository.listArtifactGrants(projectId, granted.body.artifact.id)).grants)
         .toStrictEqual([annaGrant]);
+      expect(await sharingRows(granted.body.artifact.id)).toStrictEqual([annaAdded]);
 
       // Switching to restricted keeps only the owner's and a grantee's content
       // access; removing the grant then ends the grantee's, and removing the
@@ -2385,6 +2401,13 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       expect(await holders()).toStrictEqual(kept);
       await change(switched.body.artifact.id, [], [anna, "owner@example.test"]);
       expect(await holders()).toStrictEqual([owner, owner]);
+      // The owner's address was never granted, so only Anna's removal is recorded,
+      // and the activity without grant changes shows neither.
+      expect(await sharingRows(switched.body.artifact.id)).toStrictEqual([
+        annaAdded,
+        {action: "grant_remove", authorizedByPrincipalId: null, grantee: anna},
+      ]);
+      expect(await sharingRows(switched.body.artifact.id, false)).toStrictEqual([]);
 
       await identities.deactivateMember(grantInstallationId, "member_anna", changedAt);
       expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna")).toBe(false);
