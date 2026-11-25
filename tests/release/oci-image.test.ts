@@ -382,6 +382,11 @@ async function verifyArchitectureRuntime(input: {
         "test ! -e node_modules/tsx",
         "test ! -e node_modules/vitest",
         "test ! -e node_modules/oxlint",
+        // Development tools would also sit in pnpm's store, unlinked from the top level.
+        "test -z \"$(ls node_modules/.pnpm | grep -E '^(esbuild|oxlint|tsx|typescript|vite|vitest)@')\"",
+        // The runtime has the node binary only: no npm, corepack or yarn.
+        "test ! -e /usr/local/lib/node_modules",
+        "test ! -e /usr/local/bin/npm",
         "test -s dist/web/review.html",
         "test -s dist/web/review-frame.html",
         "find dist/web/assets -type f -name '*.js' -print -quit | grep -q .",
