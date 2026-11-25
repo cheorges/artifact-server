@@ -320,12 +320,13 @@ Start with a small, explicit tool surface:
 | Tool | Purpose |
 | --- | --- |
 | `artifact_capabilities` | Report the upload workflow, deployment mode, sharing settings, and current limits. |
-| `artifact_list` | Find artifacts the current principal may access, each with its owner's name; scope `mine` keeps only the caller's own. |
-| `artifact_get` | Read artifact metadata, the current immutable version, its complete manifest, and its exact full-screen Review link. |
+| `artifact_list` | Find artifacts the current principal may access, each with its owner's name; scope `mine` keeps only the caller's own, scope `shared_with_me` only restricted artifacts others shared with the caller. |
+| `artifact_get` | Read artifact metadata, the current immutable version, its complete manifest, and its exact full-screen Review link. For the owner or an administrator, `grants` lists the people a restricted artifact is shared with and whether that applies now; for anyone else it is `null`. |
 | `artifact_open` | Return the exact full-screen Review link and raw content link for the selected artifact and exact version when requested. The client opens them on the user's computer and prefers Review for human handoff. |
 | `artifact_create_upload` | Create an expiring upload handle, a direct-upload plan, and an upload grant for its file uploads. |
 | `artifact_commit_upload` | Verify the manifest and publish an immutable version. Return the exact-version review URL as the primary human handoff, plus stable and raw links. |
 | `artifact_set_visibility` | Change between account-required and public-link access when permitted. A public link opens only the current version. Warn that public copies cannot be recalled when the change may have ended a served public link (AUTH-034), and perform the configured CDN purge when returning to account-required. |
+| `artifact_set_grants` | Add and remove people, by exact email address, who may find, open, compare, and comment on a restricted artifact. Input `artifactId`, optional `projectId`, `add` and `remove` (at most 100 addresses each); output `{active, grants: [{grantee, kind, grantedAt, grantedByPrincipalId}]}`. Only the owner or an administrator, and an API key also needs the management capability. Grants apply only while the artifact is restricted; removing one ends that person's access at once (AUTH-038). |
 | `artifact_set_tags` | Replace the artifact's normalized tag set without changing its saved files. |
 | `artifact_version_list` | List immutable saved versions and their exact content addresses. Use `artifact_open` when a user needs an authorized browser address. |
 | `artifact_diff` | Return a bounded comparison summary and a link to the full comparison. |

@@ -2025,6 +2025,14 @@
                   from restricted, and the switch ends other people's open content sessions at
                   once.
                 </p>
+                <p>
+                  The owner or an administrator can share a restricted artifact with people by
+                  exact email address. Those people find it under "Shared with me", open every
+                  version, compare, and comment, but never manage it. A grant for someone not yet
+                  a member applies once they are admitted, an email change at the issuer ends its
+                  effect, and removing it ends that person's open content sessions at once
+                  (decision 0033).
+                </p>
               </div>
             </article>
           </div>
@@ -3246,6 +3254,7 @@ artifact_open
 artifact_create_upload
 artifact_commit_upload
 artifact_set_visibility
+artifact_set_grants
 artifact_set_tags
 artifact_version_list
 artifact_diff
@@ -3821,7 +3830,7 @@ artifact_delete</code></pre>
                 <li>Saved versions that never change, plus the ability to restore an earlier one.</li>
                 <li>File and text comparisons between any two saved versions.</li>
                 <li>Optional private Git handoff, off by default and selected by explicit installation configuration.</li>
-                <li>Three access settings: account required, public link, and restricted to the owner and administrators.</li>
+                <li>Three access settings: account required, public link, and restricted to the owner, administrators, and the people the owner shares it with by email.</li>
                 <li>Browser access, MCP, the Artifact Server command-line program, and normal web requests from software.</li>
                 <li>An optional connection from one Artifact Server installation to one Plannotator organization, including signed operation requests and temporary browser sessions.</li>
                 <li>An explicit Plannotator review response that may add a credential-free review bridge without changing the stored artifact.</li>

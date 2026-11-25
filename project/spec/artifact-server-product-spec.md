@@ -182,6 +182,7 @@ The three access settings control reading:
 1. **Account required:** every admitted member of this standalone installation may read the artifact. This is the default.
 2. **Public link:** no account is required. Anyone who can reach the server and has the link may read it.
 3. **Restricted:** only the artifact's owner, the person who created it, and the installation's administrators can find, read, or manage it. Other members and service principals see it nowhere, and a direct request answers as if it did not exist. Only the owner or an administrator can switch an artifact to or from restricted, and the switch ends other people's open content sessions at once. See [decision 0030](decisions/0030-artifact-owner-and-restricted-access.md).
+   The owner or an administrator can also share a restricted artifact with people by exact email address. An active member whose current email matches finds it under "Shared with me", opens every version, compares versions, and reads and writes comments, but never publishes, restores, changes tags, access, or grants, deletes, dispatches, or receives a git-history credential. A grant for someone who is not a member yet applies once they are admitted, a member whose email changes at the issuer loses the grant's effect, and removing a grant ends that person's open content sessions at once. Grants are kept but unused while the artifact is not restricted, and an artifact holds at most 100. See [decision 0033](decisions/0033-grants-to-persons.md).
 
 A public link removes sign-in. It does not open a firewall, create a tunnel, or put a private server on the internet. An administrator can disable public links for the installation.
 
@@ -375,6 +376,7 @@ artifact_open
 artifact_create_upload
 artifact_commit_upload
 artifact_set_visibility
+artifact_set_grants
 artifact_set_tags
 artifact_version_list
 artifact_diff

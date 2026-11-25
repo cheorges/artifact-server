@@ -165,6 +165,22 @@ endpoint accepts only Microsoft Graph tokens. A person is therefore recognized
 on `/mcp` after signing in through the browser once; a first contact through
 MCP alone is refused by the admission rules above.
 
+## Share restricted artifacts with people
+
+An artifact set to "Only me" (`restricted`) is visible to its owner and
+installation administrators. The owner or an administrator can add people by
+exact email address in the Share dialog, with `artifact_set_grants` over MCP, or
+with `PATCH /api/v1/artifacts/{id}/grants`. Those people find it under "Shared
+with me", open every version, and comment; they never manage it.
+
+A grant matches an active member whose current email equals the address after
+trimming and lowercasing, so it can name someone who is not a member yet: it
+applies once they are admitted. If the issuer changes a member's email, their
+grants stop matching on the next request. Removing a grant ends that person's
+open content sessions at once; copies they already downloaded cannot be
+recalled. Grants are kept, but unused, while the artifact has another access
+setting, and one artifact holds at most 100.
+
 ## Turn public links off
 
 A public link opens an artifact's current version without sign-in. To keep
