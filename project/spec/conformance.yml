@@ -1829,12 +1829,12 @@ requirements:
 
   - id: AUTH-036
     kind: security
-    behavior: Only an artifact's owner, as a member through any of their own channels or as the service key that published it, and installation administrators can delete it through HTTP, MCP, and the web interface; no capability lets anyone else delete, while any member may still make an earlier version current.
+    behavior: Only an artifact's owner, as a member through any of their own channels or as the service key that published it, and installation administrators signed in as themselves can delete it through HTTP, MCP, and the web interface. An API key also needs the management capability, no capability lets anyone else delete, and any member may still make an earlier version current.
     owner: authorization
     source: {file: decisions/0032-owner-only-delete.md, anchor: decision}
     acceptance:
       behavior: {id: AUTH-036-B, description: "The owner deletes over HTTP and MCP, a service key deletes the artifact it published, an administrator deletes another member's artifact, and another member still makes an earlier version current."}
-      failure: {id: AUTH-036-F, description: "Another member over HTTP and MCP and a service key with artifact:manage:any are refused with AUTHORIZATION_DENIED, and the artifact stays listed."}
+      failure: {id: AUTH-036-F, description: "Another member over HTTP and MCP, a service key with artifact:manage:any, and an administrator acting through their own API key are refused with AUTHORIZATION_DENIED for someone else's artifact, and the artifact stays listed."}
     deployments: *all
     status: implementing
     proof_gap: AUTH-036-B and AUTH-036-F run against the local SQLite server, the web rule is unit-tested, a browser test proves the owner notice on Make current and Delete for an administrator in Chromium, and Postgres and D1 runtime tests refuse a delete by a caller that does not own the artifact. No deployment-specific evidence is recorded.

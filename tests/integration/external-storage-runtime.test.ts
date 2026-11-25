@@ -2360,7 +2360,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
         [published.body.artifact.id, handedOver.body.artifact.id].toSorted(),
       );
 
-      const deleteAs = (artifact: typeof published.body) =>
+      const deleteWithDefaultToken = (artifact: typeof published.body) =>
         fetch(`${server.baseUrl}/api/v1/artifacts/${artifact.artifact.id}`, {
           body: JSON.stringify({expectedCurrentVersionId: artifact.version.id}),
           headers: {
@@ -2370,8 +2370,8 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
           },
           method: "DELETE",
         });
-      expect((await deleteAs(handedOver.body)).status).toBe(403);
-      expect((await deleteAs(published.body)).status).toBe(200);
+      expect((await deleteWithDefaultToken(handedOver.body)).status).toBe(403);
+      expect((await deleteWithDefaultToken(published.body)).status).toBe(200);
       expect(await listedFor(null)).toEqual([handedOver.body.artifact.id]);
     } finally {
       await database.close();

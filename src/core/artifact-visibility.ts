@@ -44,14 +44,17 @@ export function mayChangeRestriction(
 }
 
 /**
- * Report whether a principal may delete an artifact.
+ * Report whether a principal owns an artifact or is an installation
+ * administrator signed in as themselves: the ownership half of AUTH-036.
  *
- * Deleting cannot be undone, so only installation administrators and the
- * owner may do it: the member through any of their own channels, or the
- * service key that published it. No capability lets anyone else delete,
+ * The owner is the principal that created the artifact, so a member counts
+ * through any of their own channels and a service key through the artifact
+ * it published. An administrator acting through an API key counts only as
+ * the owner of what that key's member owns. Deleting also needs
+ * `requireArtifactManagement`; no capability stands in for this check,
  * `artifact:manage:any` included.
  */
-export function mayDeleteArtifact(
+export function isOwnerOrHumanAdministrator(
   principal: Principal,
   artifact: Pick<ArtifactRecord, "ownerPrincipalId">,
 ): boolean {

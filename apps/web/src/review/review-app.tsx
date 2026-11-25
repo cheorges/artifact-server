@@ -61,7 +61,7 @@ import {
   sourceDriftDescription,
   sourceFreshnessLabel,
 } from "@/lib/presentation";
-import {makeCurrentOwnerNotice, viewerMayDeleteArtifact} from "./artifact-ownership.ts";
+import {makeCurrentOwnerNotice, viewerOwnsOrAdministersArtifact} from "./artifact-ownership.ts";
 import artifactServerAnimationUrl from "./assets/artifact-server.svg";
 import {ArtifactMark} from "./artifact-mark.tsx";
 import {
@@ -1013,7 +1013,7 @@ function ArtifactReview({
   ) || session.principal.capabilities.includes("artifact:manage:any");
   const canDeleteArtifact = canManageArtifacts
     && details !== null
-    && viewerMayDeleteArtifact(session.principal, details.artifact.ownerPrincipalId);
+    && viewerOwnsOrAdministersArtifact(session.principal, details.artifact.ownerPrincipalId);
   const makeCurrentNotice = details === null
     ? null
     : makeCurrentOwnerNotice(

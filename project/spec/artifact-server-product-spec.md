@@ -199,7 +199,7 @@ The mutation policy is separate from the read settings. A restricted artifact na
 | Publish a new version | Yes | Only with publish capability |
 | Restore a version | Yes | Only with management capability |
 | Change account required/public link | Yes | Only with management capability |
-| Delete the artifact | Only their own; administrators any (decision 0032) | Only artifacts it published |
+| Delete the artifact | Only their own; administrators any (decision 0032) | Only artifacts it published, and only with management capability |
 
 Artifact lists, artifact details, and artifact activity name the owner and each action's actor: a member by their display name, a service key by its name. They never show an email address, not even a display name that is one, and a member keeps their name after deactivation. If the names cannot be read, the answer comes without them. A list can be narrowed to the caller's own artifacts with the scope `mine` through HTTP, MCP, and the web interface's Mine filter.
 

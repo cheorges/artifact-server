@@ -45,6 +45,7 @@ const toolResultSchema = z.object({
   }).loose(),
 });
 const memberSchema = z.object({member: z.object({id: z.string()})});
+const sessionSchema = z.object({principal: z.object({id: z.string()})});
 const issuedKeySchema = z.object({
   apiKey: z.object({principalId: z.string()}),
   token: z.string().startsWith("as_key_"),
@@ -138,7 +139,7 @@ describe("owner-only delete", () => {
     expect(await listedIds(ben)).toEqual([restored.id]);
   });
 
-  test("AUTH-036-F: another member and a service key with artifact:manage:any cannot delete someone else's artifact over HTTP or MCP, and it stays listed", async () => {
+  test("AUTH-036-F: another member, a service key with artifact:manage:any, and an administrator acting through their own API key cannot delete someone else's artifact, and it stays listed", async () => {
     const adaPage = await publishAs(ada, "Ada's page");
     const benPage = await publishAs(ben, "Ben's page");
 
@@ -161,6 +162,20 @@ describe("owner-only delete", () => {
     expect(errorSchema.parse(await byService.json()).error.message).toBe(refusal);
     const byOtherMember = await deleteOverHttp(ada, benPage);
     expect(byOtherMember.status).toBe(403);
+
+    // Signed in as themselves an administrator may delete anything; their own
+    // API key acts as their member and owns only what they published.
+    const administratorId = sessionSchema.parse(await (await fetch(
+      `${server.baseUrl}/api/v1/session`,
+      {headers: browserMutationHeaders()},
+    )).json()).principal.id;
+    const administratorKey = await issueKey(administratorId, "Administrator's key");
+    const byAdministratorKey = await deleteOverHttp(administratorKey, adaPage);
+    expect(byAdministratorKey.status).toBe(403);
+    expect(errorSchema.parse(await byAdministratorKey.json()).error).toEqual({
+      code: "AUTHORIZATION_DENIED",
+      message: refusal,
+    });
 
     expect((await listedIds(ben)).toSorted()).toEqual([adaPage.id, benPage.id].toSorted());
   });

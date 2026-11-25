@@ -452,17 +452,17 @@ describe("Cloudflare D1 comments", () => {
       )).json());
       expect(mine.artifacts.map(({artifact}) => artifact.id)).toEqual([own.artifact.id]);
 
-      const deleteAs = (artifact: typeof own) =>
+      const deleteWithDefaultToken = (artifact: typeof own) =>
         namesWorker.fetch(`${origin}/api/v1/artifacts/${artifact.artifact.id}`, {
           body: JSON.stringify({expectedCurrentVersionId: artifact.version.id}),
           headers: mutationHeaders(`names-delete-${artifact.artifact.id}`),
           method: "DELETE",
         });
-      const refused = await deleteAs(byAda);
+      const refused = await deleteWithDefaultToken(byAda);
       expect(refused.status).toBe(403);
       expect(failureSchema.parse(await refused.json()).error.code)
         .toBe("AUTHORIZATION_DENIED");
-      expect((await deleteAs(own)).status).toBe(200);
+      expect((await deleteWithDefaultToken(own)).status).toBe(200);
     } finally {
       await namesWorker.stop();
       await rm(namesDirectory, {force: true, recursive: true});

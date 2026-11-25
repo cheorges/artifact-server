@@ -7,10 +7,12 @@ export interface OwnershipViewer {
 }
 
 /**
- * Whether the interface offers Delete. It mirrors the server rule (AUTH-036):
- * the owner, or an administrator signed in themselves rather than through a key.
+ * Whether the viewer owns the artifact or is an administrator signed in as
+ * themselves rather than through a key: the ownership half of the server's
+ * delete rule (AUTH-036). Offering Delete also needs management rights,
+ * which the caller checks.
  */
-export function viewerMayDeleteArtifact(
+export function viewerOwnsOrAdministersArtifact(
   viewer: OwnershipViewer,
   ownerPrincipalId: string | null,
 ): boolean {

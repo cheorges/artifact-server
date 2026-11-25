@@ -12,13 +12,17 @@ Deleting an artifact needs one of two things: the caller owns it, or the
 caller is an installation administrator signed in as themselves. The owner is
 the principal that created the artifact: a member through their browser
 session, MCP sign-in, or their own API key, or the service key that published
-it. No capability lets anyone else delete, `artifact:manage:any` included.
+it. An API key also needs the management capability, as for every other
+management change. No capability lets anyone else delete,
+`artifact:manage:any` included.
 
 | Caller | Delete own artifact | Delete someone else's |
 | --- | --- | --- |
-| Member (browser, MCP, own key) | yes | no |
-| Installation administrator | yes | yes |
-| Service key | yes, what it published | no, whatever its capabilities |
+| Member (browser session or MCP sign-in) | yes | no |
+| Member's own API key | yes, with management capability | no |
+| Installation administrator, signed in as themselves | yes | yes |
+| Administrator's own API key | yes, with management capability | no |
+| Service key | yes, what it published, with management capability | no, whatever its capabilities |
 
 Everything else in AUTH-008 stays as it is. In particular, any member may
 still restore an earlier version ("Make current") on a colleague's artifact:
