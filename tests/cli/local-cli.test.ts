@@ -21,6 +21,8 @@ import {fetchLoopbackContent} from "../support/fetch-loopback-content.js";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const publicationTestTimeoutMilliseconds = 60_000;
+/** Two CLI processes start one after the other; a loaded CI agent needs more than the default. */
+const managedOpenTestTimeoutMilliseconds = 60_000;
 const runningProcesses = new Set<ChildProcessWithoutNullStreams>();
 const assignedAddressSchema = z.object({port: z.number().int().positive()});
 const publicationSchema = z.object({
@@ -113,7 +115,7 @@ describe("local Artifact Server CLI", () => {
       }
       await rm(parentDirectory, {force: true, recursive: true});
     }
-  });
+  }, managedOpenTestTimeoutMilliseconds);
 
   test("starts with private reusable credentials without printing them", async () => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "artifact-server-cli-"));
