@@ -696,8 +696,8 @@ const migrationLoader = Migrator.fromRecord({
   "0009_git_history_mirror": addGitHistoryMirror,
   "0010_agent_capabilities": widenRegisteredAgentKind,
   "0011_artifact_search_name": addArtifactSearchName,
-  "0012_staged_upload_grant": addStagedUploadGrant,
-  "0013_artifact_owner": addArtifactOwner,
+  "0012_artifact_owner": addArtifactOwner,
+  "0013_staged_upload_grant": addStagedUploadGrant,
 });
 
 /** Schema revision required by this Artifact Server build. */
@@ -791,10 +791,10 @@ export const readPostgresMigrationStatus = Effect.gen(function*() {
     name: "artifact_search_name",
   }, {
     migration_id: 12,
-    name: "staged_upload_grant",
+    name: "artifact_owner",
   }, {
     migration_id: 13,
-    name: "artifact_owner",
+    name: "staged_upload_grant",
   }] as const;
   const observedRequiredHistory = rows.filter(
     (row) => row.migration_id <= requiredPostgresSchemaVersion,
