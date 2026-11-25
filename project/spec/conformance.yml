@@ -1773,7 +1773,7 @@ requirements:
 
   - id: AUTH-031
     kind: security
-    behavior: An opt-in restricted access setting limits one artifact to its owner and installation administrators on every surface, while account_required stays the default and account_required and public_link keep their behavior.
+    behavior: An opt-in restricted access setting limits one artifact to its owner, installation administrators, and the people it is granted to (AUTH-037) on every surface, while account_required stays the default and account_required and public_link keep their behavior.
     owner: authorization
     source: {file: decisions/0030-artifact-owner-and-restricted-access.md, anchor: decision}
     acceptance:
@@ -1839,6 +1839,34 @@ requirements:
     status: implementing
     proof_gap: AUTH-036-B and AUTH-036-F run against the local SQLite server, the web rule is unit-tested, a browser test proves the owner notice on Make current and Delete for an administrator in Chromium, and Postgres and D1 runtime tests refuse a delete by a caller that does not own the artifact. No deployment-specific evidence is recorded.
     depends_on: [AUTH-008, AUTH-030]
+    evidence: []
+
+  - id: AUTH-037
+    kind: security
+    behavior: Active members whose current email matches a grant on a restricted artifact can find, list under shared-with-me, read, open, compare, and comment on it, while every other member and every service principal still cannot see it and grantees cannot manage it.
+    owner: authorization
+    source: {file: decisions/0033-grants-to-persons.md, anchor: decision}
+    acceptance:
+      behavior: {id: AUTH-037-B, description: "A member granted by email, including before they are admitted and with different case and whitespace, lists, searches, reads, opens content of, compares, and comments on a restricted artifact through HTTP, MCP, and a member-bound key, and finds it under shared-with-me."}
+      failure: {id: AUTH-037-F, description: "Ungranted members and service principals get not found; a grantee cannot publish, restore, change tags, access, or grants, delete, dispatch, or obtain git-history credentials; a deactivated grantee or one whose email changed loses access; grants on an artifact that is not restricted change nothing."}
+    deployments: *all
+    status: implementing
+    proof_gap: Local conformance tests run on SQLite; Postgres and D1 runtime tests cover the listing filter, the shared-with-me scope, and grantee reads. No deployment-specific evidence is recorded.
+    depends_on: [AUTH-030, AUTH-031]
+    evidence: []
+
+  - id: AUTH-038
+    kind: security
+    behavior: Only the owner or an administrator reads or changes the grants of an artifact; a change is atomic and bounded, and removing a grant or switching to restricted ends content access that is no longer allowed while keeping the owner's, administrators', and grantees'.
+    owner: authorization
+    source: {file: decisions/0033-grants-to-persons.md, anchor: decision}
+    acceptance:
+      behavior: {id: AUTH-038-B, description: "The owner and an administrator add and remove grants through HTTP and MCP, repeated adds are no-ops, the list reports whether it is active, switching away from restricted keeps the list, and switching to restricted keeps grantee and administrator content sessions."}
+      failure: {id: AUTH-038-F, description: "Non-owners get 403 or not found and grantees cannot read the list; malformed addresses, an address both added and removed, and changes above 100 grants are refused with nothing changed; removing a grant deletes that member's content sessions and bootstraps for the artifact."}
+    deployments: *all
+    status: implementing
+    proof_gap: Local conformance tests run on SQLite; Postgres covers concurrent adds and the cap; no deployment-specific evidence is recorded.
+    depends_on: [AUTH-031, AUTH-037]
     evidence: []
 
   - id: SEC-001
