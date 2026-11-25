@@ -47,6 +47,8 @@ identity:
   oidcSubjectClaim: ""
   oidcMcpAudience: ""
   oidcMcpScopes: ""
+  oidcAutoAdmit: false
+  oidcAllowedEmailDomains: []
 
 serviceAccount:
   create: true

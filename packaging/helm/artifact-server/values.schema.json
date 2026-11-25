@@ -126,7 +126,7 @@
     "identity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["workosClientId", "workosIssuer", "oidcClientId", "oidcIssuer", "oidcScopes", "oidcSubjectClaim", "oidcMcpAudience", "oidcMcpScopes"],
+      "required": ["workosClientId", "workosIssuer", "oidcClientId", "oidcIssuer", "oidcScopes", "oidcSubjectClaim", "oidcMcpAudience", "oidcMcpScopes", "oidcAutoAdmit", "oidcAllowedEmailDomains"],
       "properties": {
         "workosClientId": {"type": "string"},
         "workosIssuer": {"type": "string"},
@@ -135,7 +135,16 @@
         "oidcScopes": {"type": "string"},
         "oidcSubjectClaim": {"type": "string"},
         "oidcMcpAudience": {"type": "string"},
-        "oidcMcpScopes": {"type": "string"}
+        "oidcMcpScopes": {"type": "string"},
+        "oidcAutoAdmit": {"type": "boolean"},
+        "oidcAllowedEmailDomains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 253,
+            "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
+          }
+        }
       }
     },
     "serviceAccount": {
