@@ -12,6 +12,7 @@ import {
   CommentResolved,
   DispatchStateConflict,
   GrantLimitReached,
+  GroupSharingUnavailable,
   IdempotencyConflict,
   InvalidDispatch,
   ProjectArchived,
@@ -42,8 +43,10 @@ import {
   accessSettingSql,
   artifactGrantRowSchema,
   grantLimitMessage,
+  groupGrantedSql,
   restrictedScopeParameters,
   restrictedScopeSql,
+  sharedWithMemberParameters,
   sharedWithMemberSql,
   sharingActionKindsSql,
   storedAccessSetting,
@@ -755,8 +758,9 @@ export function createD1ArtifactRepository(
   const readGrants = async (artifactId: string): Promise<readonly ArtifactGrant[]> => {
     const result = await database.prepare(`
       SELECT grantee, grantee_kind AS kind, granted_at AS grantedAt,
-             granted_by_principal_id AS grantedByPrincipalId
-      FROM artifact_grants WHERE artifact_id = ? ORDER BY grantee
+             granted_by_principal_id AS grantedByPrincipalId, display_name AS displayName
+      FROM artifact_grants WHERE artifact_id = ?
+      ORDER BY grantee_kind, coalesce(display_name, grantee), grantee
     `).bind(artifactId).all<z.input<typeof artifactGrantRowSchema>>();
     return result.results.map((row) => artifactGrantRowSchema.parse(row));
   };
@@ -2555,9 +2559,7 @@ export function createD1ArtifactRepository(
       `).bind(
         command.projectId,
         ...restrictedScopeParameters(command.restrictedScope),
-        command.sharedWithPrincipalId,
-        command.sharedWithPrincipalId,
-        command.sharedWithPrincipalId,
+        ...sharedWithMemberParameters(command.sharedWithPrincipalId, command.sharedWithGroupIds),
         command.ownerPrincipalId,
         command.ownerPrincipalId,
         command.search ?? null,
@@ -2721,20 +2723,34 @@ export function createD1ArtifactRepository(
       };
     },
 
-    isArtifactGrantee: async (projectId: string, artifactId: string, principalId: string) => {
+    isArtifactGrantee: async (
+      projectId: string,
+      artifactId: string,
+      principalId: string,
+      groupIds: readonly string[],
+    ) => {
       const row = await database.prepare(`
         SELECT 1 AS granted FROM artifacts
-        JOIN artifact_grants grant_row
-          ON grant_row.artifact_id = artifacts.id AND grant_row.grantee_kind = 'email'
-        JOIN installation_members member ON member.email = grant_row.grantee
         WHERE artifacts.project_id = ? AND artifacts.id = ? AND artifacts.deleted_at IS NULL
-          AND member.id = ? AND member.status = 'active'
+          AND (EXISTS (
+            SELECT 1 FROM artifact_grants grant_row
+            JOIN installation_members member ON member.email = grant_row.grantee
+            WHERE grant_row.artifact_id = artifacts.id AND grant_row.grantee_kind = 'email'
+              AND member.id = ? AND member.status = 'active'
+          ) OR ${groupGrantedSql("artifacts")})
         LIMIT 1
-      `).bind(projectId, artifactId, principalId).first();
+      `).bind(projectId, artifactId, principalId, JSON.stringify(groupIds)).first();
       return row !== null;
     },
 
     changeArtifactGrants: async (command: ChangeArtifactGrants): Promise<ArtifactGrantList> => {
+      // The Worker has no directory (decision 0034), so no caller can name a
+      // group here; the stored shape and the read paths are ready for one.
+      if (command.addGroups.length > 0 || command.removeGroups.length > 0) {
+        throw new GroupSharingUnavailable({
+          message: "This installation has no directory, so artifacts cannot be shared with groups.",
+        });
+      }
       const artifact = await readArtifact(command.projectId, command.artifactId);
       const restricted = artifact.accessSetting === accessSettings.restricted;
       // One JSON parameter per list keeps every statement far below D1's bound

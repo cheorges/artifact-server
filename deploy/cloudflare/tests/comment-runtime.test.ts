@@ -575,8 +575,8 @@ describe("Cloudflare D1 comments", () => {
       try {
         expect(schemaVersionRowSchema.parse(upgraded.prepare(
           "SELECT version FROM artifact_server_schema WHERE component = 'runtime'",
-        ).get()).version).toBe(13);
-        expect(upgraded.prepare("PRAGMA table_info(artifact_grants)").all()).toHaveLength(5);
+        ).get()).version).toBe(14);
+        expect(upgraded.prepare("PRAGMA table_info(artifact_grants)").all()).toHaveLength(6);
         // Revision 13 rebuilt the action table with a grantee column and kept its rows.
         expect(z.array(z.object({name: z.string()})).parse(upgraded.prepare("PRAGMA table_info(actions)").all())
           .map(({name}) => name)).toContain("grantee");
@@ -728,6 +728,179 @@ describe("Cloudflare D1 comments", () => {
     } finally {
       await grantsWorker.stop();
       await rm(grantsDirectory, {force: true, recursive: true});
+    }
+  }, 120_000);
+
+  it("AUTH-040 foundation: D1 revision 14 keeps grants and activity while it widens them to groups, and the Worker refuses group sharing", async () => {
+    const groupsDirectory = await mkdtemp(
+      join(tmpdir(), "artifact-server-cloudflare-groups-"),
+    );
+    let groupsWorker = await startWorker(groupsDirectory);
+    try {
+      const target = await publishArtifact(groupsWorker, "groups-target-publish-1");
+      await groupsWorker.stop();
+
+      // Ada owns the restricted page; the database is rewound to the revision
+      // 13 shape: grants name addresses only, and actions lack the group kinds.
+      const d1File = await findD1DatabaseFile(groupsDirectory);
+      const ada = memberKey("ada");
+      let projectId = "";
+      const database = new DatabaseSync(d1File);
+      try {
+        const {installationId} = z.object({installationId: z.string()}).parse(
+          database.prepare("SELECT installation_id AS installationId FROM projects LIMIT 1").get(),
+        );
+        database.prepare(`
+          INSERT INTO installation_members
+            (id, installation_id, email, display_name, role, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 'member', 'active', '2026-11-12T00:00:00.000Z', '2026-11-12T00:00:00.000Z')
+        `).run(ada.memberId, installationId, ada.email, ada.name);
+        database.prepare(`
+          INSERT INTO managed_api_keys
+            (id, installation_id, name, prefix, secret_digest, principal_id, principal_kind,
+             capabilities_json, authorized_by_principal_id, created_at, expires_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'human', ?, ?, '2026-11-12T00:00:00.000Z', '2099-01-01T00:00:00.000Z')
+        `).run(
+          ada.keyId,
+          installationId,
+          "Ada's key",
+          ada.keyId,
+          createHash("sha256").update(ada.token).digest("hex"),
+          ada.memberId,
+          JSON.stringify(["artifact:create", "artifact:manage:any", "artifact:publish:any", "artifact:read"]),
+          ada.memberId,
+        );
+        database.prepare("UPDATE artifacts SET owner_principal_id = ?, restricted = 1 WHERE id = ?")
+          .run(ada.memberId, target.artifact.id);
+        projectId = z.object({projectId: z.string()}).parse(database.prepare(
+          "SELECT project_id AS projectId FROM artifacts WHERE id = ?",
+        ).get(target.artifact.id)).projectId;
+        database.exec(`
+          DROP TABLE artifact_grants;
+          CREATE TABLE artifact_grants (
+            artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+            grantee_kind TEXT NOT NULL CHECK (grantee_kind IN ('email')),
+            grantee TEXT NOT NULL,
+            granted_by_principal_id TEXT NOT NULL,
+            granted_at TEXT NOT NULL,
+            PRIMARY KEY (artifact_id, grantee_kind, grantee)
+          );
+          CREATE TABLE actions_old (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+            version_id TEXT NOT NULL REFERENCES versions(id),
+            action TEXT NOT NULL CHECK (action IN (
+              'publish', 'restore', 'change_access', 'change_tags', 'delete',
+              'comment_create', 'comment_reply', 'comment_update',
+              'comment_resolve', 'comment_reopen', 'comment_delete',
+              'grant_add', 'grant_remove'
+            )),
+            principal_id TEXT NOT NULL,
+            authorized_by_principal_id TEXT,
+            idempotency_key TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            grantee TEXT
+          );
+          INSERT INTO actions_old SELECT
+            id, project_id, artifact_id, version_id, action, principal_id,
+            authorized_by_principal_id, idempotency_key, created_at, grantee
+          FROM actions;
+          DROP TABLE actions;
+          ALTER TABLE actions_old RENAME TO actions;
+          UPDATE artifact_server_schema SET version = 13 WHERE component = 'runtime';
+        `);
+        database.prepare(`
+          INSERT INTO artifact_grants (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
+          VALUES (?, 'email', 'ben@example.test', ?, '2026-11-12T00:00:00.000Z')
+        `).run(target.artifact.id, ada.memberId);
+        database.prepare(`
+          INSERT INTO actions (
+            id, project_id, artifact_id, version_id, action, principal_id,
+            authorized_by_principal_id, idempotency_key, created_at, grantee
+          ) VALUES ('seeded-sharing-row', ?, ?, ?, 'grant_add', ?, NULL, 'grant_add:seeded', '2026-11-12T00:00:00.000Z', 'ben@example.test')
+        `).run(projectId, target.artifact.id, target.version.id, ada.memberId);
+      } finally {
+        database.close();
+      }
+
+      groupsWorker = await startWorker(groupsDirectory);
+      const artifactUrl = `${origin}/api/v1/artifacts/${target.artifact.id}`;
+      const asAda = (url: string, request: {readonly body?: string; readonly method?: string} = {}) =>
+        groupsWorker.fetch(url, {
+          body: request.body ?? null,
+          headers: [["Authorization", `Bearer ${ada.token}`], ["Content-Type", "application/json"]],
+          method: request.method ?? "GET",
+        });
+
+      // The Worker migrates on its first request; the address grant still lists.
+      const listed = z.object({
+        grants: z.array(z.object({displayName: z.null(), grantee: z.string(), kind: z.literal("email")})),
+      }).parse(await (await asAda(`${artifactUrl}/grants`)).json());
+      expect(listed.grants.map(({grantee}) => grantee)).toStrictEqual(["ben@example.test"]);
+
+      // No directory in the Worker: group sharing is refused and reported off.
+      const refused = await asAda(`${artifactUrl}/grants`, {
+        body: JSON.stringify({addGroups: [{id: "11111111-1111-4111-8111-111111111111", name: "Developer Productivity"}]}),
+        method: "PATCH",
+      });
+      expect(refused.status).toBe(409);
+      expect(failureSchema.parse(await refused.json()).error.code).toBe("GROUP_SHARING_UNAVAILABLE");
+      expect((await asAda(`${origin}/api/v1/directory/groups?query=dev`)).status).toBe(409);
+      const session = z.object({capabilities: z.object({groupSharing: z.boolean()})})
+        .parse(await (await asAda(`${origin}/api/v1/session`)).json());
+      expect(session.capabilities.groupSharing).toBe(false);
+      await groupsWorker.stop();
+
+      const upgraded = new DatabaseSync(d1File);
+      try {
+        expect(schemaVersionRowSchema.parse(upgraded.prepare(
+          "SELECT version FROM artifact_server_schema WHERE component = 'runtime'",
+        ).get()).version).toBe(14);
+        const columns = (table: "actions" | "artifact_grants") =>
+          z.array(z.object({name: z.string()})).parse(upgraded.prepare(`PRAGMA table_info(${table})`).all())
+            .map(({name}) => name);
+        expect(columns("artifact_grants")).toContain("display_name");
+        expect(columns("actions")).toContain("grantee");
+        expect(z.array(z.object({action: z.string(), grantee: z.string().nullable()})).parse(upgraded.prepare(
+          "SELECT action, grantee FROM actions WHERE artifact_id = ? ORDER BY action",
+        ).all(target.artifact.id))).toStrictEqual([
+          {action: "grant_add", grantee: "ben@example.test"},
+          {action: "publish", grantee: null},
+        ]);
+        const indexes = z.array(z.object({name: z.string()})).parse(upgraded.prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name IN ('actions', 'artifact_grants')",
+        ).all()).map(({name}) => name);
+        expect(indexes).toStrictEqual(expect.arrayContaining(["actions_artifact_created", "artifact_grants_grantee"]));
+        // The widened tables accept a group grant and its activity kinds.
+        upgraded.prepare(`
+          INSERT INTO artifact_grants
+            (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at, display_name)
+          VALUES (?, 'group', 'g-dep', ?, '2026-11-12T00:00:00.000Z', 'Developer Productivity')
+        `).run(target.artifact.id, ada.memberId);
+        const insertAction = upgraded.prepare(`
+          INSERT INTO actions (
+            id, project_id, artifact_id, version_id, action, principal_id,
+            authorized_by_principal_id, idempotency_key, created_at, grantee
+          ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, '2026-11-12T00:00:00.000Z', 'Developer Productivity')
+        `);
+        for (const action of ["grant_group_add", "grant_group_remove"]) {
+          insertAction.run(
+            `seeded-${action}`, projectId, target.artifact.id, target.version.id,
+            action, ada.memberId, `${action}:seeded`,
+          );
+        }
+        expect(() => upgraded.prepare(`
+          INSERT INTO artifact_grants
+            (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
+          VALUES (?, 'team', 'x', ?, '2026-11-12T00:00:00.000Z')
+        `).run(target.artifact.id, ada.memberId)).toThrow(/CHECK/u);
+      } finally {
+        upgraded.close();
+      }
+    } finally {
+      await groupsWorker.stop();
+      await rm(groupsDirectory, {force: true, recursive: true});
     }
   }, 120_000);
 
@@ -1062,7 +1235,7 @@ describe("Cloudflare D1 comments", () => {
       try {
         expect(schemaVersionRowSchema.parse(upgraded.prepare(
           "SELECT version FROM artifact_server_schema WHERE component = 'runtime'",
-        ).get()).version).toBe(13);
+        ).get()).version).toBe(14);
         const columns = z.array(tableColumnRowSchema)
           .parse(upgraded.prepare("PRAGMA table_info(login_attempts)").all())
           .map(({name}) => name);

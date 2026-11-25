@@ -8,7 +8,7 @@ import {defaultGitHistoryMaximumCopiedFiles} from
   "../../../src/git-history/git-history-capability.js";
 
 /** D1 schema revision required by the Cloudflare runtime. */
-export const requiredD1SchemaVersion = 13;
+export const requiredD1SchemaVersion = 14;
 
 /** SQL literal list of every action kind the ledger accepts. */
 const actionKindList = [
@@ -25,6 +25,8 @@ const actionKindList = [
   "'comment_delete'",
   "'grant_add'",
   "'grant_remove'",
+  "'grant_group_add'",
+  "'grant_group_remove'",
 ].join(", ");
 
 const schemaSql = `
@@ -319,10 +321,11 @@ const schemaSql = `
 
   CREATE TABLE IF NOT EXISTS artifact_grants (
     artifact_id TEXT NOT NULL REFERENCES artifacts(id),
-    grantee_kind TEXT NOT NULL CHECK (grantee_kind IN ('email')),
+    grantee_kind TEXT NOT NULL CHECK (grantee_kind IN ('email', 'group')),
     grantee TEXT NOT NULL,
     granted_by_principal_id TEXT NOT NULL,
     granted_at TEXT NOT NULL,
+    display_name TEXT,
     PRIMARY KEY (artifact_id, grantee_kind, grantee)
   );
 
@@ -636,6 +639,7 @@ export async function migrateD1(
     await addStagedUploadGrantIfMissing(database);
     await addArtifactOwnerIfMissing(database);
     await rebuildActionsForGrantsIfNeeded(database);
+    await rebuildArtifactGrantsForGroupsIfNeeded(database);
   }
   await database.batch([
     database.prepare(`
@@ -851,10 +855,17 @@ const widenRegisteredAgentsStatements = [
  * Revision 13: sharing rows name their address and use two new kinds, so the
  * action table is rebuilt with the wider CHECK and a grantee column.
  */
-const rebuildActionsForGrantsStatements = [
+/**
+ * Rebuild the action table with the current kinds and the grantee column,
+ * keeping every row. Revision 13 added the column and the two person kinds;
+ * revision 14 adds the two group kinds, so a revision 13 table keeps its
+ * grantee values.
+ */
+const rebuildActionsForGrantsStatements = (keepGrantee: boolean) => [
   `CREATE TABLE actions_upgrade_snapshot AS SELECT
     id, project_id, artifact_id, version_id, action, principal_id,
-    authorized_by_principal_id, idempotency_key, created_at
+    authorized_by_principal_id, idempotency_key, created_at,
+    ${keepGrantee ? "grantee" : "NULL AS grantee"}
     FROM actions`,
   `CREATE TABLE actions_next (
     id TEXT PRIMARY KEY,
@@ -874,18 +885,52 @@ const rebuildActionsForGrantsStatements = [
     id, project_id, artifact_id, version_id, action, principal_id,
     authorized_by_principal_id, idempotency_key, created_at, grantee
   ) SELECT id, project_id, artifact_id, version_id, action, principal_id,
-    authorized_by_principal_id, idempotency_key, created_at, NULL
+    authorized_by_principal_id, idempotency_key, created_at, grantee
     FROM actions_upgrade_snapshot`,
   "DROP TABLE actions_upgrade_snapshot",
   `CREATE INDEX IF NOT EXISTS actions_artifact_created
     ON actions(project_id, artifact_id, created_at DESC, id DESC)`,
-] as const;
+];
 
 async function rebuildActionsForGrantsIfNeeded(database: D1Database): Promise<void> {
+  const table = await database.prepare(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'actions'",
+  ).first<{sql: string}>();
+  if (table === null) return;
   const columns = await database.prepare("PRAGMA table_info(actions)").all<{name: string}>();
-  if (hasColumn(columns, "grantee")) return;
+  const hasGrantee = hasColumn(columns, "grantee");
+  if (hasGrantee && table.sql.includes("'grant_group_add'")) return;
   await database.batch(
-    rebuildActionsForGrantsStatements.map((statement) => database.prepare(statement)),
+    rebuildActionsForGrantsStatements(hasGrantee).map((statement) => database.prepare(statement)),
+  );
+}
+
+/** Widen the grant table to directory groups and their stored names, keeping every row (revision 14). */
+const rebuildArtifactGrantsForGroupsStatements = [
+  `CREATE TABLE artifact_grants_next (
+    artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    grantee_kind TEXT NOT NULL CHECK (grantee_kind IN ('email', 'group')),
+    grantee TEXT NOT NULL,
+    granted_by_principal_id TEXT NOT NULL,
+    granted_at TEXT NOT NULL,
+    display_name TEXT,
+    PRIMARY KEY (artifact_id, grantee_kind, grantee)
+  )`,
+  `INSERT INTO artifact_grants_next
+    (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
+    SELECT artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at
+    FROM artifact_grants`,
+  "DROP TABLE artifact_grants",
+  "ALTER TABLE artifact_grants_next RENAME TO artifact_grants",
+  `CREATE INDEX IF NOT EXISTS artifact_grants_grantee
+    ON artifact_grants (grantee_kind, grantee, artifact_id)`,
+] as const;
+
+async function rebuildArtifactGrantsForGroupsIfNeeded(database: D1Database): Promise<void> {
+  const columns = await database.prepare("PRAGMA table_info(artifact_grants)").all<{name: string}>();
+  if (hasColumn(columns, "display_name")) return;
+  await database.batch(
+    rebuildArtifactGrantsForGroupsStatements.map((statement) => database.prepare(statement)),
   );
 }
 
