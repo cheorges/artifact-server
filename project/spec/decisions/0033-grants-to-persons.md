@@ -19,7 +19,8 @@ exactly as 0030 describes.
 | Request | Result |
 | --- | --- |
 | Grantee lists, reads, opens content, compares, comments | allowed |
-| Grantee publishes, restores, changes tags, access or grants, deletes, dispatches, clears or removes other people's comments, asks for a git-history credential | refused |
+| Grantee publishes, restores, changes tags, access or grants, deletes, dispatches, clears or removes other people's comments | refused |
+| Grantee asks for a git-history credential | not available, the same answer as when git history is off |
 | Anyone else (member or service principal) | not found, as in 0030 |
 
 ## Recorded decisions
