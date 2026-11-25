@@ -303,8 +303,9 @@ describe("grants to persons on restricted artifacts", () => {
     const carl = await memberWithKey("Carl", "carl@example.test");
     expect((await request(carl, "POST", `${draft.id}/content-sessions`)).status).toBe(201);
 
-    // Switching back restores the list and keeps the grantee's and the
-    // administrator's content access while ending a plain member's.
+    // Switching back restores the list and keeps the grantee's content access
+    // while ending a plain member's and an administrator's: an administrator's
+    // content may come from a member-bound key, so they open it again.
     expect((await mutate(ada, "PATCH", `${draft.id}/access`, {
       accessSetting: "restricted",
       expectedCurrentVersionId: draft.currentVersionId,
@@ -313,7 +314,7 @@ describe("grants to persons on restricted artifacts", () => {
       .toStrictEqual(listed);
     expect(await listedNames(ben)).toContain("Ada's review");
     expect(openContentAccess(draft.id, ben.id)).toBeGreaterThan(0);
-    expect(openContentAccess(draft.id, administratorMemberId())).toBeGreaterThan(0);
+    expect(openContentAccess(draft.id, administratorMemberId())).toBe(0);
     expect(openContentAccess(draft.id, carl.id)).toBe(0);
   });
 

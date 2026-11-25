@@ -2733,6 +2733,7 @@ export function createD1ArtifactRepository(
       // parameter limit, and the batch at a fixed number of statements.
       const added = JSON.stringify(command.add);
       const removed = JSON.stringify(command.remove);
+      // Removing an address never ends the owner's own content access.
       const revocations = restricted
         ? ["content_sessions", "content_bootstraps"].map((table) => database.prepare(`
           DELETE FROM ${table}
@@ -2741,7 +2742,8 @@ export function createD1ArtifactRepository(
               SELECT id FROM installation_members
               WHERE email IN (SELECT value FROM json_each(?))
             )
-        `).bind(command.projectId, command.artifactId, removed))
+            AND principal_id IS NOT ?
+        `).bind(command.projectId, command.artifactId, removed, artifact.ownerPrincipalId))
         : [];
       try {
         await database.batch([
@@ -2788,17 +2790,14 @@ export function createD1ArtifactRepository(
       const artifact = await readArtifact(command.projectId, command.artifactId);
       assertCurrent(artifact, command.expectedCurrentVersionId);
       const stored = storedAccessSetting(command.accessSetting);
-      // Content opened by anyone but the owner, an active administrator, or an
-      // active grantee stops serving in the same batch.
+      // Content opened by anyone but the owner or an active grantee stops
+      // serving in the same batch. Administrators' content may come from a
+      // member-bound key, which cannot see a restricted artifact.
       const revocations = stored.restricted
         ? ["content_sessions", "content_bootstraps"].map((table) => database.prepare(`
           DELETE FROM ${table}
           WHERE project_id = ? AND artifact_id = ?
             AND principal_id IS NOT ?
-            AND principal_id NOT IN (
-              SELECT id FROM installation_members
-              WHERE role = 'administrator' AND status = 'active'
-            )
             AND principal_id NOT IN (
               SELECT member.id FROM artifact_grants grant_row
               JOIN installation_members member ON member.email = grant_row.grantee

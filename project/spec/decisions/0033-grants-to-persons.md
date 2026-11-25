@@ -49,9 +49,12 @@ while the artifact is `restricted`. Switching away and back restores them.
 ### Revocation at change time
 
 Removing a grant deletes that person's content sessions and bootstraps for
-the artifact in the same transaction. Deleting an artifact removes its grants
-in the same transaction. Switching to `restricted` keeps the
-sessions of the owner, administrators and current grantees.
+the artifact in the same transaction, unless that person owns it. Deleting an
+artifact removes its grants in the same transaction. Switching to
+`restricted` keeps the sessions of the owner and current grantees and ends
+everyone else's, administrators' included: a content session does not record
+whether a member-bound key opened it, and such a key cannot see a restricted
+artifact, so administrators open it again from the browser.
 
 ### Bounded
 

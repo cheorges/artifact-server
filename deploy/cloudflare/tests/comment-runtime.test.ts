@@ -484,6 +484,7 @@ describe("Cloudflare D1 comments", () => {
       const ada = memberKey("ada");
       const ben = memberKey("ben");
       const carl = memberKey("carl");
+      const dan = memberKey("dan");
       const database = new DatabaseSync(d1File);
       try {
         const {installationId} = z.object({installationId: z.string()}).parse(
@@ -494,7 +495,7 @@ describe("Cloudflare D1 comments", () => {
         const insertMember = database.prepare(`
           INSERT INTO installation_members
             (id, installation_id, email, display_name, role, status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, 'member', 'active', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z')
+          VALUES (?, ?, ?, ?, ?, 'active', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z')
         `);
         const insertKey = database.prepare(`
           INSERT INTO managed_api_keys
@@ -502,8 +503,14 @@ describe("Cloudflare D1 comments", () => {
              capabilities_json, authorized_by_principal_id, created_at, expires_at)
           VALUES (?, ?, ?, ?, ?, ?, 'human', ?, ?, '2026-11-10T00:00:00.000Z', '2099-01-01T00:00:00.000Z')
         `);
-        for (const member of [ada, ben, carl]) {
-          insertMember.run(member.memberId, installationId, member.email, member.name);
+        for (const member of [ada, ben, carl, dan]) {
+          insertMember.run(
+            member.memberId,
+            installationId,
+            member.email,
+            member.name,
+            member === dan ? "administrator" : "member",
+          );
           insertKey.run(
             member.keyId,
             installationId,
@@ -594,19 +601,40 @@ describe("Cloudflare D1 comments", () => {
       expect(grantSchema.parse(await (await as(ada, `${artifactUrl}/grants`)).json()).grants
         .map(({grantee}) => grantee)).toStrictEqual(["ben@example.test"]);
 
-      // Removing the grant ends Ben's open content access at once.
+      const openContentAccess = (member: MemberKey): number => {
+        const reader = new DatabaseSync(d1File, {readOnly: true});
+        try {
+          return z.object({total: z.number()}).parse(reader.prepare(`
+            SELECT (SELECT COUNT(*) FROM content_sessions WHERE principal_id = ? AND artifact_id = ?)
+              + (SELECT COUNT(*) FROM content_bootstraps WHERE principal_id = ? AND artifact_id = ?) AS total
+          `).get(member.memberId, target.artifact.id, member.memberId, target.artifact.id)).total;
+        } finally {
+          reader.close();
+        }
+      };
+
+      // Removing the grant ends Ben's open content access at once; removing the
+      // owner's own address keeps the owner's.
       expect((await as(ben, `${artifactUrl}/content-sessions`, {method: "POST"})).status).toBe(201);
-      expect((await changeGrants(ada, {remove: ["ben@example.test"]})).status).toBe(200);
+      expect((await as(ada, `${artifactUrl}/content-sessions`, {method: "POST"})).status).toBe(201);
+      expect((await changeGrants(ada, {remove: ["ben@example.test", ada.email]})).status).toBe(200);
       expect((await as(ben, artifactUrl)).status).toBe(404);
-      const revoked = new DatabaseSync(d1File, {readOnly: true});
-      try {
-        expect(z.object({total: z.number()}).parse(revoked.prepare(`
-          SELECT (SELECT COUNT(*) FROM content_sessions WHERE principal_id = ?)
-            + (SELECT COUNT(*) FROM content_bootstraps WHERE principal_id = ?) AS total
-        `).get(ben.memberId, ben.memberId)).total).toBe(0);
-      } finally {
-        revoked.close();
-      }
+      expect(openContentAccess(ben)).toBe(0);
+      expect(openContentAccess(ada)).toBeGreaterThan(0);
+
+      // Switching to restricted ends an administrator's content access too: it
+      // may come from a member-bound key, which cannot see a restricted artifact.
+      const switchTo = (accessSetting: string, idempotencyKey: string) =>
+        as(ada, `${artifactUrl}/access`, {
+          body: JSON.stringify({accessSetting, expectedCurrentVersionId: target.version.id}),
+          idempotencyKey,
+          method: "PATCH",
+        });
+      expect((await switchTo("account_required", "grants-open-target-0001")).status).toBe(200);
+      expect((await as(dan, `${artifactUrl}/content-sessions`, {method: "POST"})).status).toBe(201);
+      expect((await switchTo("restricted", "grants-close-target-0001")).status).toBe(200);
+      expect(openContentAccess(dan)).toBe(0);
+      expect(openContentAccess(ada)).toBeGreaterThan(0);
 
       // Deleting the artifact removes the addresses it was shared with.
       expect((await changeGrants(ada, {add: ["dora@example.test"]})).status).toBe(200);

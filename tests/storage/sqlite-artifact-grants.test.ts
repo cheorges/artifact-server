@@ -280,7 +280,7 @@ describe("SQLite artifact grants", () => {
       .toStrictEqual([]);
   });
 
-  test("AUTH-038 foundation: switching to restricted keeps the owner's, administrators' and grantees' content access", async () => {
+  test("AUTH-038 foundation: switching to restricted keeps only the owner's and grantees' content access", async () => {
     const artifact = await publishRestricted("Switch target", "member_owner");
     database.prepare("UPDATE artifacts SET restricted = 0 WHERE id = ?").run(artifact.artifactId);
     await repository.changeArtifactGrants({
@@ -300,8 +300,10 @@ describe("SQLite artifact grants", () => {
       principalId: "member_owner",
       projectId: artifact.projectId,
     });
+    // An administrator's content may come from a member-bound key, which cannot
+    // see a restricted artifact; administrators open it again from the browser.
     expect(contentAccessHolders(database, artifact.artifactId)).toStrictEqual([
-      "member_admin", "member_admin", "member_anna", "member_anna", "member_owner", "member_owner",
+      "member_anna", "member_anna", "member_owner", "member_owner",
     ]);
   });
 
@@ -321,5 +323,19 @@ describe("SQLite artifact grants", () => {
     expect(contentAccessHolders(database, first.artifactId)).toStrictEqual(["member_owner", "member_owner"]);
     expect(contentAccessHolders(database, second.artifactId))
       .toStrictEqual(["member_anna", "member_anna", "member_owner", "member_owner"]);
+  });
+
+  test("AUTH-038 foundation: removing the owner's own address keeps the owner's content access", async () => {
+    const artifact = await publishRestricted("Owner removes self", "member_owner");
+    await repository.changeArtifactGrants({
+      add: [anna, "owner@company.example"], artifactId: artifact.artifactId, changedAt, principalId: "member_owner", projectId: artifact.projectId, remove: [],
+    });
+    insertContentAccess(database, "owner-self", "member_owner", artifact);
+    insertContentAccess(database, "anna-self", "member_anna", artifact);
+    await repository.changeArtifactGrants({
+      add: [], artifactId: artifact.artifactId, changedAt, principalId: "member_owner", projectId: artifact.projectId,
+      remove: [anna, "owner@company.example"],
+    });
+    expect(contentAccessHolders(database, artifact.artifactId)).toStrictEqual(["member_owner", "member_owner"]);
   });
 });

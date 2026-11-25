@@ -5065,8 +5065,9 @@ export class SqliteArtifactRepository implements
 
   /**
    * End every content session and bootstrap of a now-restricted artifact not
-   * held by its owner, an active administrator, or an active member granted
-   * it by email.
+   * held by its owner or an active member granted it by email. Administrators'
+   * content may come from a member-bound key, which cannot see a restricted
+   * artifact, so they open it again from the browser.
    */
   #revokeContentAccessExceptAllowed(artifact: ArtifactRecord): void {
     for (const table of ["content_sessions", "content_bootstraps"] as const) {
@@ -5075,10 +5076,6 @@ export class SqliteArtifactRepository implements
           `DELETE FROM ${table}
            WHERE project_id = ? AND artifact_id = ?
              AND principal_id IS NOT ?
-             AND principal_id NOT IN (
-               SELECT id FROM installation_members
-               WHERE role = 'administrator' AND status = 'active'
-             )
              AND principal_id NOT IN (
                SELECT member.id FROM artifact_grants grant_row
                JOIN installation_members member ON member.email = grant_row.grantee
@@ -5095,16 +5092,17 @@ export class SqliteArtifactRepository implements
     }
   }
 
-  /** End the content access of members with one email to one artifact. */
+  /** End the content access of members with one email to one artifact, except its owner's. */
   #revokeContentAccessOfEmail(projectId: string, artifactId: string, email: string): void {
     for (const table of ["content_sessions", "content_bootstraps"] as const) {
       this.#database
         .prepare(
           `DELETE FROM ${table}
            WHERE project_id = ? AND artifact_id = ?
-             AND principal_id IN (SELECT id FROM installation_members WHERE email = ?)`,
+             AND principal_id IN (SELECT id FROM installation_members WHERE email = ?)
+             AND principal_id IS NOT (SELECT owner_principal_id FROM artifacts WHERE id = ?)`,
         )
-        .run(projectId, artifactId, email);
+        .run(projectId, artifactId, email, artifactId);
     }
   }
 

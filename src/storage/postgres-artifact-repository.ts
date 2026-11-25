@@ -1456,8 +1456,9 @@ export class PostgresArtifactRepository implements
             AND deleted_at IS NULL
           RETURNING id, owner_principal_id AS "ownerPrincipalId"`;
         if (!stored.restricted) return update;
-        // Content opened by anyone but the owner, an active administrator,
-        // or an active grantee stops serving at once.
+        // Content opened by anyone but the owner or an active grantee stops
+        // serving at once. Administrators' content may come from a
+        // member-bound key, which cannot see a restricted artifact.
         return update.pipe(Effect.tap(() => Effect.forEach(
           ["content_sessions", "content_bootstraps"] as const,
           (table) => sql.unsafe(
@@ -1466,10 +1467,6 @@ export class PostgresArtifactRepository implements
                AND principal_id IS DISTINCT FROM (
                  SELECT owner_principal_id FROM artifacts
                  WHERE installation_id = $1 AND project_id = $2 AND id = $3
-               )
-               AND principal_id NOT IN (
-                 SELECT id FROM installation_members
-                 WHERE installation_id = $1 AND role = 'administrator' AND status = 'active'
                )
                AND principal_id NOT IN (
                  SELECT member.id FROM artifact_grants grant_row
@@ -1548,6 +1545,10 @@ export class PostgresArtifactRepository implements
              WHERE installation_id = $1 AND project_id = $2 AND artifact_id = $3
                AND principal_id IN (
                  SELECT id FROM installation_members WHERE installation_id = $1 AND email = $4
+               )
+               AND principal_id IS DISTINCT FROM (
+                 SELECT owner_principal_id FROM artifacts
+                 WHERE installation_id = $1 AND project_id = $2 AND id = $3
                )`,
             [installationId, command.projectId, command.artifactId, email],
           ), {discard: true});

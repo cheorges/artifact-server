@@ -1857,15 +1857,15 @@ requirements:
 
   - id: AUTH-038
     kind: security
-    behavior: Only the owner or an administrator reads or changes the grants of an artifact; a change is atomic and bounded, and removing a grant or switching to restricted ends content access that is no longer allowed while keeping the owner's, administrators', and grantees'.
+    behavior: Only the owner or an administrator reads or changes the grants of an artifact; a change is atomic and bounded, and removing a grant or switching to restricted ends content access that is no longer allowed while keeping the owner's and, on a switch, the grantees'; administrators open it again, because their content may come from a member-bound key.
     owner: authorization
     source: {file: decisions/0033-grants-to-persons.md, anchor: decision}
     acceptance:
-      behavior: {id: AUTH-038-B, description: "The owner and an administrator add and remove grants through HTTP and MCP, repeated adds are no-ops, the list reports whether it is active, switching away from restricted keeps the list, and switching to restricted keeps grantee and administrator content sessions."}
-      failure: {id: AUTH-038-F, description: "Non-owners get 403 or not found, grantees cannot read the list, and an owner's key without the management capability is refused; malformed addresses, an address both added and removed, and changes above 100 grants are refused with nothing changed; removing a grant deletes that member's content sessions and bootstraps for the artifact, and deleting the artifact removes its grants."}
+      behavior: {id: AUTH-038-B, description: "The owner and an administrator add and remove grants through HTTP and MCP, repeated adds are no-ops, the list reports whether it is active, switching away from restricted keeps the list, and switching to restricted keeps grantee content sessions and ends an administrator's."}
+      failure: {id: AUTH-038-F, description: "Non-owners get 403 or not found, grantees cannot read the list, and an owner's key without the management capability is refused; malformed addresses, an address both added and removed, and changes above 100 grants are refused with nothing changed; removing a grant deletes that member's content sessions and bootstraps for the artifact unless they own it, and deleting the artifact removes its grants."}
     deployments: *all
     status: implementing
-    proof_gap: AUTH-038-B and AUTH-038-F run against the local SQLite server through HTTP and MCP; SQLite storage tests prove the schema, the cap, and revocation on switching and on removal; a Postgres runtime test covers concurrent adds, the cap, and both revocations; a D1 runtime test covers the upgrade, the cap, and revocation on removal; and a browser test proves the Share dialog's people section in Chromium. No deployment-specific evidence is recorded.
+    proof_gap: AUTH-038-B and AUTH-038-F run against the local SQLite server through HTTP and MCP; SQLite storage tests prove the schema, the cap, and revocation on switching and on removal; a Postgres runtime test covers concurrent adds, the cap, and both revocations; a D1 runtime test covers the upgrade, the cap, and both revocations; and a browser test proves the Share dialog's people section in Chromium. No deployment-specific evidence is recorded.
     depends_on: [AUTH-031, AUTH-037]
     evidence: []
 

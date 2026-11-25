@@ -2268,6 +2268,8 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
         ["member_anna", anna, "member"],
         ["member_ben", "ben@example.test", "member"],
         ["member_root", "root@example.test", "administrator"],
+        // The owner's own address, to prove removing it keeps the owner's access.
+        [owner, "owner@example.test", "member"],
       ].map(([id, email, role]) => identities.admitMember({
         createdAt: changedAt,
         displayName: String(id),
@@ -2334,8 +2336,9 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       expect((await repository.listArtifactGrants(projectId, granted.body.artifact.id)).grants)
         .toStrictEqual([annaGrant]);
 
-      // Switching to restricted keeps the owner's, an administrator's and a
-      // grantee's content access; removing the grant then ends the grantee's.
+      // Switching to restricted keeps only the owner's and a grantee's content
+      // access; removing the grant then ends the grantee's, and removing the
+      // owner's own address keeps the owner's.
       expect(await change(switched.body.artifact.id, [anna])).toMatchObject({active: false});
       await database.run(Effect.gen(function*() {
         const sql = yield* SqlClient;
@@ -2375,10 +2378,10 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
         principalId: owner,
         projectId,
       });
-      const kept = [owner, owner, "member_anna", "member_anna", "member_root", "member_root"].toSorted();
+      const kept = [owner, owner, "member_anna", "member_anna"].toSorted();
       expect(await holders()).toStrictEqual(kept);
-      await change(switched.body.artifact.id, [], [anna]);
-      expect(await holders()).toStrictEqual(kept.filter((principalId) => principalId !== "member_anna"));
+      await change(switched.body.artifact.id, [], [anna, "owner@example.test"]);
+      expect(await holders()).toStrictEqual([owner, owner]);
 
       await identities.deactivateMember(grantInstallationId, "member_anna", changedAt);
       expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna")).toBe(false);
