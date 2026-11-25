@@ -1785,6 +1785,20 @@ requirements:
     depends_on: [AUTH-002, AUTH-030, AUTH-008, SCP-008]
     evidence: []
 
+  - id: AUTH-033
+    kind: security
+    behavior: A person who opens the moving latest link or an exact raw link of an account-required artifact in a browser tab is sent through application sign-in and receives the same single-use, viewer-bound content bootstrap as Open raw artifact, so the secondary Share links work for every member who can read the artifact. Scripts, frames, subresources, and same-origin refreshes keep the content-session refusal.
+    owner: authorization
+    source: {file: artifact-server-product-spec.html, anchor: sharing}
+    acceptance:
+      behavior: {id: AUTH-033-B, description: "With an application session, open a private artifact's latest link and a nested raw link of an earlier version from outside the content host; each lands on its version through one bootstrap, the latest link on the current version and the raw link on the exact file."}
+      failure: {id: AUTH-033-F, description: "Without an application session both links lead only to browser login or a 401; scripts, frames, HEAD, and same-origin refreshes never redirect; a forwarded host cannot steer the redirect; an unknown content address issues nothing; and an installation without a configured application origin keeps the 401."}
+    deployments: *all
+    status: implementing
+    proof_gap: Proved through HTTP on the local SQLite server, including OIDC sign-in against a stub provider. The packaged deployments, the Postgres runtime, and a real browser have no recorded evidence yet.
+    depends_on: [AUTH-002, AUTH-014, AUTH-015, VER-001, CMT-017]
+    evidence: []
+
   - id: SEC-001
     kind: security
     behavior: Published websites are treated as untrusted arbitrary browser JavaScript.

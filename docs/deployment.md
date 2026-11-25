@@ -180,6 +180,11 @@ option. Artifacts made public earlier keep their setting but are served only to
 signed-in members. Administrators find them under Settings > Public links and
 make them account-required there. The default is `on`.
 
+The Latest and Raw links in the Share dialog still work for members. A person
+who opens one in a browser is sent through sign-in on `ARTIFACT_SERVER_ORIGIN`
+and then to the artifact. Scripts and API clients get `401` as before, so they
+use an API key or MCP.
+
 The AWS package sets this variable from its `publicLinks` setting. The other
 packages do not pass it yet.
 

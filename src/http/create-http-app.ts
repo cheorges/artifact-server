@@ -58,6 +58,7 @@ import {
 } from "../application/compare-artifact.js";
 import {
   ContentAccessService,
+  type IssuedContentBootstrap,
   isPreviewLeaseToken,
 } from "../application/content-access.js";
 import {
@@ -131,7 +132,10 @@ import {
   decideByteRange,
   ifRangeAllowsPartialResponse,
 } from "./byte-range.js";
-import {permitsSpaEntryFallback} from "./spa-navigation.js";
+import {
+  isDocumentNavigation,
+  permitsSpaEntryFallback,
+} from "./spa-navigation.js";
 import {
   maximumCommentPageSize,
   maximumDeclaredFiles,
@@ -2487,19 +2491,56 @@ export function createHttpApp(
   });
 
   app.get("/artifacts/:artifactId", async (context) => {
-    const current = await runHttpApplicationEffect(
+    const principal = await optionalApplicationPrincipal(context, dependencies);
+    const opened = await runHttpApplicationEffect(
       context,
       dependencies,
       ContentAccessService.use((contentAccess) =>
-        contentAccess.resolvePublicArtifact(context.req.param("artifactId"))
+        contentAccess.openArtifactLink({
+          artifactId: context.req.param("artifactId"),
+          principal,
+        })
+      ).pipe(
+        Effect.catchTag("ContentSessionRequired", (failure) =>
+          isDocumentNavigation(context.req.method, context.req.raw.headers)
+            ? Effect.succeed(null)
+            : Effect.fail(failure)),
       ),
     );
+    if (opened === null) return signInRedirect(context);
+    if (opened.kind === "private") {
+      return bootstrapRedirect(context, dependencies, opened.bootstrap);
+    }
     const versionUrl = versionBrowserUrl(
       responseApplicationUrl(context, dependencies),
       dependencies.contentDomain,
-      current.version.contentToken,
+      opened.contentToken,
     );
     return context.redirect(versionUrl, 302);
+  });
+
+  // A private raw link sends a person here from its content host: sign in,
+  // then receive the same bootstrap the Open raw artifact action issues.
+  app.get("/content-sessions/:contentToken", async (context) => {
+    const contentToken = contentTokenSchema.parse(context.req.param("contentToken"));
+    const destinationPath = requestedContentPath(context);
+    const principal = await optionalApplicationPrincipal(context, dependencies);
+    if (principal === null) {
+      if (isDocumentNavigation(context.req.method, context.req.raw.headers)) {
+        return signInRedirect(context);
+      }
+      throw new AuthenticationRequired({
+        message: "A valid application session is required.",
+      });
+    }
+    const issued = await runHttpApplicationEffect(
+      context,
+      dependencies,
+      ContentAccessService.use((contentAccess) =>
+        contentAccess.issueVersionLinkBootstrap({contentToken, principal})
+      ),
+    );
+    return bootstrapRedirect(context, dependencies, issued, destinationPath);
   });
 
   app.notFound((context) =>
@@ -3492,20 +3533,41 @@ async function serveVersionContent(
   if (requestedPath === null) {
     return versionNotFoundResponse();
   }
+  const authorized = ContentAccessService.use((contentAccess) =>
+    contentAccess.authorizeVersionContent({
+      contentToken,
+      fallback: permitsSpaEntryFallback(context.req.raw.headers)
+        ? "entry"
+        : "none",
+      path: requestedPath,
+      sessionToken: contentSessionToken(cookieHeader),
+    })
+  );
+  const signInUrl = versionSignInUrl(
+    context,
+    contentToken,
+    requestedPath,
+    dependencies,
+  );
   const content = await runHttpApplicationEffect(
     context,
     dependencies,
-    ContentAccessService.use((contentAccess) =>
-      contentAccess.authorizeVersionContent({
-        contentToken,
-        fallback: permitsSpaEntryFallback(context.req.raw.headers)
-          ? "entry"
-          : "none",
-        path: requestedPath,
-        sessionToken: contentSessionToken(cookieHeader),
-      })
-    ),
+    signInUrl === null
+      ? authorized
+      : authorized.pipe(
+        Effect.catchTag("ContentSessionRequired", () => Effect.succeed(signInUrl)),
+      ),
   );
+  if (content instanceof URL) {
+    return new Response(null, {
+      headers: {
+        "Cache-Control": "private, no-store",
+        Location: content.toString(),
+        "Referrer-Policy": "no-referrer",
+      },
+      status: 302,
+    });
+  }
   if (content === null) {
     return versionNotFoundResponse();
   }
@@ -4137,6 +4199,90 @@ function redirectWithRequestQuery(
 ): Response {
   const requestUrl = new URL(context.req.url);
   return context.redirect(`${pathname}${requestUrl.search}`, 308);
+}
+
+/** Read the browser's application session on a page route, or null without one. */
+async function optionalApplicationPrincipal(
+  context: Context<HttpEnvironment>,
+  dependencies: HttpAppDependencies,
+): Promise<Principal | null> {
+  const parsedSession = sessionTokenSchema.safeParse(
+    getCookie(context, applicationCookieNames(dependencies).session),
+  );
+  if (!parsedSession.success) return null;
+  return runHttpApplicationEffect(
+    context,
+    dependencies,
+    AuthenticationService.use((authentication) =>
+      authentication.authenticateApplicationSession(
+        Redacted.make(parsedSession.data, {label: "application-session"}),
+      )
+    ).pipe(
+      Effect.map(({principal}) => principal),
+      Effect.catchTag("AuthenticationRequired", () => Effect.succeed(null)),
+    ),
+  );
+}
+
+/** Send a person to browser login and back to the page they opened. */
+function signInRedirect(context: Context<HttpEnvironment>): Response {
+  const requestUrl = new URL(context.req.url);
+  const login = new URLSearchParams({
+    returnTo: `${requestUrl.pathname}${requestUrl.search}`,
+  });
+  context.header("Cache-Control", "private, no-store");
+  return context.redirect(`/auth/login?${login.toString()}`, 302);
+}
+
+/** Hand one issued private-content bootstrap to the browser. */
+function bootstrapRedirect(
+  context: Context<HttpEnvironment>,
+  dependencies: HttpAppDependencies,
+  issued: IssuedContentBootstrap,
+  destinationPath?: string,
+): Response {
+  context.header("Cache-Control", "private, no-store");
+  context.header("Referrer-Policy", "no-referrer");
+  return context.redirect(
+    contentBootstrapBrowserUrl(
+      responseApplicationUrl(context, dependencies),
+      dependencies.contentDomain,
+      issued.contentToken,
+      Redacted.value(issued.token),
+      destinationPath,
+    ),
+    302,
+  );
+}
+
+/**
+ * Where a person who opens a private raw link from outside its content host
+ * signs in. Scripts, frames, subresources, and the bootstrap page's own
+ * same-origin refresh keep the 401, so a refused session cannot loop. The
+ * target is the configured application origin, never one taken from the
+ * request; without one there is nowhere trusted to send the person.
+ */
+function versionSignInUrl(
+  context: Context<HttpEnvironment>,
+  contentToken: string,
+  manifestPath: string,
+  dependencies: HttpAppDependencies,
+): URL | null {
+  const fetchSite = context.req.header("sec-fetch-site");
+  if (
+    dependencies.trustedApplicationOrigin === null
+    || !isDocumentNavigation(context.req.method, context.req.raw.headers)
+    || fetchSite === undefined
+    || fetchSite === "same-origin"
+  ) {
+    return null;
+  }
+  const signInUrl = new URL(
+    `/content-sessions/${contentToken}`,
+    dependencies.trustedApplicationOrigin,
+  );
+  if (manifestPath !== "") signInUrl.searchParams.set("path", manifestPath);
+  return signInUrl;
 }
 
 function redirectToReview(

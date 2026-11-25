@@ -143,6 +143,26 @@ export interface IssueContentBootstrapCommand {
     | {readonly kind: "version"; readonly versionId: string};
 }
 
+/** Input for opening an artifact's moving latest link in one browser. */
+export interface OpenArtifactLinkCommand {
+  readonly artifactId: string;
+  readonly principal: Principal | null;
+}
+
+/**
+ * How the latest link opens: a public current version needs no session, a
+ * private one needs a bootstrap issued to the signed-in viewer.
+ */
+export type OpenedArtifactLink =
+  | {readonly kind: "public"; readonly contentToken: string}
+  | {readonly kind: "private"; readonly bootstrap: IssuedContentBootstrap};
+
+/** Input for issuing a bootstrap to one version's raw content address. */
+export interface IssueVersionLinkBootstrapCommand {
+  readonly contentToken: string;
+  readonly principal: Principal;
+}
+
 /** Input for exchanging a one-time bootstrap on its bound content host. */
 export interface ExchangeContentBootstrapCommand {
   readonly contentToken: string;
@@ -198,9 +218,12 @@ interface ContentAccessOperations {
   readonly issuePreviewLease: (
     command: IssuePreviewLeaseCommand,
   ) => Effect.Effect<IssuedPreviewLease, ContentAccessFailure>;
-  readonly resolvePublicArtifact: (
-    artifactId: string,
-  ) => Effect.Effect<PublishedVersion, ContentAccessFailure>;
+  readonly issueVersionLinkBootstrap: (
+    command: IssueVersionLinkBootstrapCommand,
+  ) => Effect.Effect<IssuedContentBootstrap, ContentAccessFailure>;
+  readonly openArtifactLink: (
+    command: OpenArtifactLinkCommand,
+  ) => Effect.Effect<OpenedArtifactLink, ContentAccessFailure>;
 }
 
 /** Owns public-link and private version-scoped browser authorization. */
@@ -413,10 +436,13 @@ function makeContentAccessService(
     return content;
   });
 
-  const resolvePublicArtifact = Effect.fn(
-    "ContentAccessService.resolvePublicArtifact",
-  )(function*(artifactId: string) {
-    const current = yield* dependencies.repository.findCurrentVersion(null, artifactId);
+  const openArtifactLink = Effect.fn(
+    "ContentAccessService.openArtifactLink",
+  )(function*(command: OpenArtifactLinkCommand) {
+    const current = yield* dependencies.repository.findCurrentVersion(
+      null,
+      command.artifactId,
+    );
     if (current === null) {
       return yield* Effect.fail(
         new ArtifactNotFound({message: "The artifact does not exist."}),
@@ -426,11 +452,45 @@ function makeContentAccessService(
       "artifact.project.id": current.artifact.projectId,
     });
     if (
-      !isPubliclyReadable(current.artifact.accessSetting, dependencies.publicLinks)
+      isPubliclyReadable(current.artifact.accessSetting, dependencies.publicLinks)
     ) {
-      return yield* sessionRequired();
+      return {
+        contentToken: current.version.contentToken,
+        kind: "public",
+      } satisfies OpenedArtifactLink;
     }
-    return current;
+    if (command.principal === null) return yield* sessionRequired();
+    // The bootstrap path re-reads the current version and applies the same
+    // project, visibility, and content-session checks as Open raw artifact.
+    const bootstrap = yield* issueContentBootstrap({
+      artifactId: current.artifact.id,
+      principal: command.principal,
+      projectId: current.artifact.projectId,
+      target: {kind: "current"},
+    });
+    return {bootstrap, kind: "private"} satisfies OpenedArtifactLink;
+  });
+
+  const issueVersionLinkBootstrap = Effect.fn(
+    "ContentAccessService.issueVersionLinkBootstrap",
+  )(function*(command: IssueVersionLinkBootstrapCommand) {
+    const entry = yield* dependencies.repository.findVersionContent(
+      command.contentToken,
+      "",
+      "none",
+    );
+    if (entry === null) {
+      return yield* Effect.fail(
+        new VersionNotFound({message: "The saved version does not exist."}),
+      );
+    }
+    yield* Effect.annotateCurrentSpan({"artifact.project.id": entry.projectId});
+    return yield* issueContentBootstrap({
+      artifactId: entry.artifactId,
+      principal: command.principal,
+      projectId: entry.projectId,
+      target: {kind: "version", versionId: entry.versionId},
+    });
   });
 
   return ContentAccessService.of({
@@ -439,7 +499,8 @@ function makeContentAccessService(
     exchangeContentBootstrap,
     issueContentBootstrap,
     issuePreviewLease,
-    resolvePublicArtifact,
+    issueVersionLinkBootstrap,
+    openArtifactLink,
   });
 }
 
