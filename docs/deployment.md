@@ -182,6 +182,9 @@ open content sessions at once; copies they already downloaded cannot be
 recalled. Grants are kept, but unused, while the artifact has another access
 setting, and one artifact holds at most 100.
 
+Every addition and removal is recorded in the artifact's activity; only the owner
+and administrators see those entries.
+
 ## Turn public links off
 
 A public link opens an artifact's current version without sign-in. To keep

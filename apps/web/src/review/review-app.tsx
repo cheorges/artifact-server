@@ -55,7 +55,6 @@ import {
   type Version,
 } from "@/api/client";
 import {
-  actionLabel,
   formatBytes,
   formatTimestamp,
   sourceDriftDescription,
@@ -69,6 +68,7 @@ import {
   restrictionAllowsManagement,
   viewerOwnsOrAdministersArtifact,
 } from "./artifact-ownership.ts";
+import {actionLabel} from "./activity-label.ts";
 import artifactServerAnimationUrl from "./assets/artifact-server.svg";
 import {ArtifactMark} from "./artifact-mark.tsx";
 import {
@@ -2550,7 +2550,7 @@ function ActivityInspector({
         <ol className="as-activity-list">
           {actions.map((action) => (
             <li key={action.id}>
-              <strong>{actionLabel(action.action)}</strong>
+              <strong>{actionLabel(action)}</strong>
               <time dateTime={action.createdAt}>{formatTimestamp(action.createdAt)}</time>
               {action.actorDisplayName === null
                 ? <code title={action.principalId}>{compactId(action.principalId)}</code>

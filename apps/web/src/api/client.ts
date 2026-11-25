@@ -325,6 +325,8 @@ export interface ArtifactAction {
     | "comment_resolve"
     | "comment_update"
     | "delete"
+    | "grant_add"
+    | "grant_remove"
     | "link"
     | "publish"
     | "relink"
@@ -334,6 +336,8 @@ export interface ArtifactAction {
   readonly artifactId: string;
   readonly authorizedByPrincipalId: string | null;
   readonly createdAt: string;
+  /** The address a sharing row added or removed; null for every other kind (AUTH-039). */
+  readonly grantee: string | null;
   readonly id: string;
   readonly idempotencyKey: string;
   readonly principalId: string;
@@ -428,6 +432,8 @@ const actionSchema: z.ZodType<ArtifactAction> = z.object({
     "comment_resolve",
     "comment_update",
     "delete",
+    "grant_add",
+    "grant_remove",
     "link",
     "publish",
     "relink",
@@ -437,6 +443,7 @@ const actionSchema: z.ZodType<ArtifactAction> = z.object({
   artifactId: z.string(),
   authorizedByPrincipalId: z.string().nullable(),
   createdAt: z.string(),
+  grantee: z.string().nullable(),
   id: z.string(),
   idempotencyKey: z.string(),
   principalId: z.string(),

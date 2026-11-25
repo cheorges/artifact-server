@@ -1879,7 +1879,7 @@ requirements:
       failure: {id: AUTH-039-F, description: "Repeated adds, removals of addresses not granted, and refused changes write no row; grantees, other members, and keys without the right never receive a sharing row, and paging their activity skips sharing rows without short or empty pages."}
     deployments: *all
     status: implementing
-    proof_gap: To be filled in Task 5 with the tests that exist.
+    proof_gap: AUTH-039-B and AUTH-039-F run against the local SQLite server through HTTP and MCP; a SQLite storage test proves the column, the upgrade, the paging filter, and one row per real change rolled back with a refused change; a Postgres runtime test covers concurrent adds, the cap, and the filter; a D1 runtime test covers the revision 13 rebuild, rows per real change, the cap, and the owner-only listing; and a browser test proves the Activity tab labels in Chromium. No deployment-specific evidence is recorded.
     depends_on: [AUTH-038]
     evidence: []
 

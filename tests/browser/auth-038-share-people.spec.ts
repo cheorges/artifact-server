@@ -111,6 +111,45 @@ test.describe("AUTH-038 in a browser", () => {
     }
   });
 
+  test("AUTH-039 in a browser: the Activity tab lists who was added and removed", async ({browser}) => {
+    const fixture = await startBrowserFixture(browser);
+    try {
+      const published = await publishNew(fixture.server, fixture.installation, {
+        accessSetting: "account_required",
+        content: "<!doctype html><title>Audited plan</title><p>Audited plan</p>",
+        idempotencyKey: "auth-039-browser-audited-plan",
+        mediaType: "text/html; charset=utf-8",
+        name: "Audited plan",
+        path: "index.html",
+      });
+      await localLogin(fixture);
+      const page = fixture.page;
+      await page.goto(
+        `${fixture.server.baseUrl}/review?project=prj_default&artifact=${published.body.artifact.id}&version=${published.body.version.id}`,
+      );
+      await page.locator(".as-preview-header__actions")
+        .getByRole("button", {exact: true, name: "Share"})
+        .click();
+      const share = page.locator(".as-share-popover[data-open]");
+      await share.getByRole("button", {name: "Manage access"}).click();
+      const people = share.getByRole("group", {name: "People with access"});
+      await people.getByRole("textbox", {name: "Email address"}).fill("ben@example.test");
+      await people.getByRole("button", {exact: true, name: "Add"}).click();
+      await expect(people.getByRole("listitem")).toHaveText(["ben@example.test"]);
+      await people.getByRole("button", {name: "Remove ben@example.test"}).click();
+      await expect(people.getByRole("listitem")).toHaveCount(0);
+      await page.keyboard.press("Escape");
+
+      // The signed-in local administrator may see who a page is shared with.
+      await page.getByRole("tab", {name: "Activity"}).click();
+      const activity = page.locator(".as-activity-list li");
+      await expect(activity.filter({hasText: "Shared with ben@example.test"})).toHaveCount(1);
+      await expect(activity.filter({hasText: "Stopped sharing with ben@example.test"})).toHaveCount(1);
+    } finally {
+      await stopBrowserFixture(fixture);
+    }
+  });
+
   test("AUTH-037 in a browser: the Shared with me filter lists only restricted pages others shared with the viewer", async ({browser}) => {
     const fixture = await startBrowserFixture(browser);
     try {

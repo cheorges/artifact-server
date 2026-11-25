@@ -1,4 +1,4 @@
-import { ApiError, type ArtifactAction, type SourceFreshness } from "@/api/client";
+import { ApiError, type SourceFreshness } from "@/api/client";
 
 /** Formats a stored ISO timestamp for the current browser locale. */
 export function formatTimestamp(value: string): string {
@@ -71,45 +71,6 @@ export function accessSettingLabel(
 ): string {
   if (value === "restricted") return "Only me";
   return value === "account_required" ? "Account required" : "Public link";
-}
-
-/** Converts one action kind into compact action-history text. */
-export function actionLabel(value: ArtifactAction["action"]): string {
-  switch (value) {
-    case "capture":
-      return "Captured linked file";
-    case "link":
-      return "Linked source file";
-    case "relink":
-      return "Relinked source file";
-    case "change_access":
-      return "Changed access";
-    case "change_tags":
-      return "Replaced tags";
-    case "comment_create":
-      return "Opened comment";
-    case "comment_delete":
-      return "Deleted comment";
-    case "comment_reopen":
-      return "Reopened comment";
-    case "comment_reply":
-      return "Replied to comment";
-    case "comment_resolve":
-      return "Resolved comment";
-    case "comment_update":
-      return "Edited comment";
-    case "delete":
-      return "Tombstoned artifact";
-    case "publish":
-      return "Published version";
-    case "restore":
-      return "Restored version";
-  }
-  return actionHandled(value);
-}
-
-function actionHandled(value: never): never {
-  throw new Error(`Unhandled artifact action: ${String(value)}`);
 }
 
 /** Names one linked file's state against the last capture. */
