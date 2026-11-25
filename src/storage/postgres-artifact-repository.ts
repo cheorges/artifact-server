@@ -194,6 +194,8 @@ const artifactActionKindSchema = z.enum([
 ]);
 const nonnegativeIntegerSchema = z.coerce.number().int().nonnegative();
 /** A live artifact a grant change applies to: its setting and current version. */
+const removedGroupRowSchema = z.object({displayName: z.string()});
+
 interface LiveGrantTarget {
   readonly currentVersionId: string;
   readonly restricted: boolean;
@@ -1507,24 +1509,18 @@ export class PostgresArtifactRepository implements
     projectId: string,
     artifactId: string,
     principalId: string,
+    groupIds: readonly string[],
   ): Promise<boolean> {
     const installationId = this.#installationId;
     return this.#database.run(Effect.gen(function*() {
       const sql = yield* SqlClient;
       const rows = yield* sql.unsafe<object>(
         `SELECT 1 AS granted FROM artifacts
-         JOIN artifact_grants grant_row
-           ON grant_row.installation_id = artifacts.installation_id
-           AND grant_row.artifact_id = artifacts.id
-           AND grant_row.grantee_kind = 'email'
-         JOIN installation_members member
-           ON member.installation_id = grant_row.installation_id
-           AND member.email = grant_row.grantee
          WHERE artifacts.installation_id = $1 AND artifacts.project_id = $2
            AND artifacts.id = $3 AND artifacts.deleted_at IS NULL
-           AND member.id = $4 AND member.status = 'active'
+           AND ${postgresGrantedToMemberSql("artifacts", "$4", "$5")}
          LIMIT 1`,
-        [installationId, projectId, artifactId, principalId],
+        [installationId, projectId, artifactId, principalId, JSON.stringify(groupIds)],
       );
       return rows.length > 0;
     }));
@@ -1542,7 +1538,11 @@ export class PostgresArtifactRepository implements
         );
         // One activity row per address a change really adds or removes (AUTH-039).
         const recordSharing = (
-          action: typeof artifactActionKinds.grantAdd | typeof artifactActionKinds.grantRemove,
+          action:
+            | typeof artifactActionKinds.grantAdd
+            | typeof artifactActionKinds.grantGroupAdd
+            | typeof artifactActionKinds.grantGroupRemove
+            | typeof artifactActionKinds.grantRemove,
           grantee: string,
         ) => sql.unsafe(
           `INSERT INTO actions (
@@ -1596,6 +1596,53 @@ export class PostgresArtifactRepository implements
             [installationId, command.projectId, command.artifactId, email],
           ), {discard: true});
         }), {discard: true});
+        yield* Effect.forEach(command.addGroups, (group) => Effect.gen(function*() {
+          const inserted = yield* sql.unsafe<object>(
+            `INSERT INTO artifact_grants
+               (installation_id, artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at, display_name)
+             VALUES ($1, $2, 'group', $3, $4, $5, $6)
+             ON CONFLICT DO NOTHING
+             RETURNING grantee`,
+            [installationId, command.artifactId, group.id, command.principalId, command.changedAt, group.displayName],
+          );
+          if (inserted.length > 0) {
+            yield* recordSharing(artifactActionKinds.grantGroupAdd, group.displayName);
+          }
+        }), {discard: true});
+        const removedGroups = yield* Effect.forEach(command.removeGroups, (groupId) => Effect.gen(function*() {
+          const removed = yield* sql.unsafe<object>(
+            `DELETE FROM artifact_grants
+             WHERE installation_id = $1 AND artifact_id = $2
+               AND grantee_kind = 'group' AND grantee = $3
+             RETURNING display_name AS "displayName"`,
+            [installationId, command.artifactId, groupId],
+          );
+          const row = removedGroupRowSchema.optional().parse(removed[0]);
+          if (row === undefined) return false;
+          yield* recordSharing(artifactActionKinds.grantGroupRemove, row.displayName);
+          return true;
+        }));
+        if (active && removedGroups.includes(true)) {
+          // Nobody knows who was in the group, so everyone but the owner and
+          // the people granted by address opens the artifact again.
+          yield* Effect.forEach(["content_sessions", "content_bootstraps"] as const, (table) => sql.unsafe(
+            `DELETE FROM ${table}
+             WHERE installation_id = $1 AND project_id = $2 AND artifact_id = $3
+               AND principal_id IS DISTINCT FROM (
+                 SELECT owner_principal_id FROM artifacts
+                 WHERE installation_id = $1 AND project_id = $2 AND id = $3
+               )
+               AND principal_id NOT IN (
+                 SELECT member.id FROM artifact_grants grant_row
+                 JOIN installation_members member
+                   ON member.installation_id = grant_row.installation_id
+                   AND member.email = grant_row.grantee
+                 WHERE grant_row.installation_id = $1 AND grant_row.artifact_id = $3
+                   AND grant_row.grantee_kind = 'email' AND member.status = 'active'
+               )`,
+            [installationId, command.projectId, command.artifactId],
+          ), {discard: true});
+        }
         const countRows = yield* sql.unsafe<object>(
           `SELECT count(*)::int AS count FROM artifact_grants
            WHERE installation_id = $1 AND artifact_id = $2`,
@@ -1763,17 +1810,17 @@ export class PostgresArtifactRepository implements
     });
   }
 
-  /** The grants of one artifact in byte order of the address, as SQLite sorts them. */
+  /** The grants of one artifact as SQLite orders them: people by address, then groups by name, in byte order. */
   #readGrants(artifactId: string) {
     const installationId = this.#installationId;
     return Effect.gen(function*() {
       const sql = yield* SqlClient;
       const rows = yield* sql.unsafe<object>(
         `SELECT grantee, grantee_kind AS kind, granted_at AS "grantedAt",
-                granted_by_principal_id AS "grantedByPrincipalId"
+                granted_by_principal_id AS "grantedByPrincipalId", display_name AS "displayName"
          FROM artifact_grants
          WHERE installation_id = $1 AND artifact_id = $2
-         ORDER BY grantee COLLATE "C"`,
+         ORDER BY grantee_kind COLLATE "C", coalesce(display_name, grantee) COLLATE "C", grantee COLLATE "C"`,
         [installationId, artifactId],
       );
       const grants: readonly ArtifactGrant[] = z.array(artifactGrantRowSchema).parse(rows);
@@ -1924,13 +1971,18 @@ export class PostgresArtifactRepository implements
       const limitPlaceholder = command.sort === "comments" ? "$8" : "$7";
       // Appended after the limit so the existing placeholders keep their numbers.
       queryParameters.push(...restrictedScopeParameters(command.restrictedScope));
-      const restrictedAllPlaceholder = `$${queryParameters.length - 2}`;
-      const restrictedOwnerPlaceholder = `$${queryParameters.length - 1}`;
-      const restrictedGranteePlaceholder = `$${queryParameters.length}`;
+      const restrictedAllPlaceholder = `$${queryParameters.length - 3}`;
+      const restrictedOwnerPlaceholder = `$${queryParameters.length - 2}`;
+      const restrictedGranteePlaceholder = `$${queryParameters.length - 1}`;
+      const restrictedGroupsPlaceholder = `$${queryParameters.length}`;
       queryParameters.push(command.ownerPrincipalId);
       const ownerFilterPlaceholder = `$${queryParameters.length}`;
       queryParameters.push(command.sharedWithPrincipalId);
       const sharedWithPlaceholder = `$${queryParameters.length}`;
+      queryParameters.push(JSON.stringify(
+        command.sharedWithPrincipalId === null ? [] : command.sharedWithGroupIds,
+      ));
+      const sharedWithGroupsPlaceholder = `$${queryParameters.length}`;
       const rows = yield* sql.unsafe<object>(
         `SELECT * FROM (
           SELECT id, project_id AS "projectId", name,
@@ -1955,10 +2007,10 @@ export class PostgresArtifactRepository implements
             AND deleted_at IS NULL
             AND (NOT restricted OR ${restrictedAllPlaceholder}::int = 1
               OR owner_principal_id = ${restrictedOwnerPlaceholder}::text
-              OR ${postgresGrantedToMemberSql("artifacts", restrictedGranteePlaceholder)})
+              OR ${postgresGrantedToMemberSql("artifacts", restrictedGranteePlaceholder, restrictedGroupsPlaceholder)})
             AND (${sharedWithPlaceholder}::text IS NULL OR (restricted
               AND owner_principal_id IS DISTINCT FROM ${sharedWithPlaceholder}::text
-              AND ${postgresGrantedToMemberSql("artifacts", sharedWithPlaceholder)}))
+              AND ${postgresGrantedToMemberSql("artifacts", sharedWithPlaceholder, sharedWithGroupsPlaceholder)}))
             AND (${ownerFilterPlaceholder}::text IS NULL
               OR owner_principal_id = ${ownerFilterPlaceholder}::text)
             AND ($3::text IS NULL

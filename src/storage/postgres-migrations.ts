@@ -674,6 +674,30 @@ const addActionGrantee = Effect.gen(function*() {
         ))`);
 });
 
+/**
+ * Let grants name directory groups and keep the name a group had when it was
+ * added, and allow the two activity kinds that record it (decision 0034).
+ */
+const addGroupGrants = Effect.gen(function*() {
+  const sql = yield* SqlClient;
+  yield* sql.unsafe("ALTER TABLE artifact_grants ADD COLUMN display_name TEXT");
+  yield* sql.unsafe(`
+    ALTER TABLE artifact_grants
+      DROP CONSTRAINT artifact_grants_grantee_kind_check,
+      ADD CONSTRAINT artifact_grants_grantee_kind_check
+        CHECK (grantee_kind IN ('email', 'group'))`);
+  yield* sql.unsafe(`
+    ALTER TABLE actions
+      DROP CONSTRAINT actions_action_check,
+      ADD CONSTRAINT actions_action_check
+        CHECK (action IN (
+          'publish', 'restore', 'change_access', 'change_tags', 'delete',
+          'comment_create', 'comment_reply', 'comment_update',
+          'comment_resolve', 'comment_reopen', 'comment_delete',
+          'grant_add', 'grant_remove', 'grant_group_add', 'grant_group_remove'
+        ))`);
+});
+
 const addArtifactSearchName = Effect.gen(function*() {
   const sql = yield* SqlClient;
   yield* sql.unsafe("ALTER TABLE artifacts ADD COLUMN search_name TEXT");
@@ -734,10 +758,11 @@ const migrationLoader = Migrator.fromRecord({
   "0013_staged_upload_grant": addStagedUploadGrant,
   "0014_artifact_grants": addArtifactGrants,
   "0015_action_grantee": addActionGrantee,
+  "0016_group_grants": addGroupGrants,
 });
 
 /** Schema revision required by this Artifact Server build. */
-export const requiredPostgresSchemaVersion = 15;
+export const requiredPostgresSchemaVersion = 16;
 
 /** Migration compatibility observed without changing Postgres. */
 export interface PostgresMigrationStatus {
@@ -837,6 +862,9 @@ export const readPostgresMigrationStatus = Effect.gen(function*() {
   }, {
     migration_id: 15,
     name: "action_grantee",
+  }, {
+    migration_id: 16,
+    name: "group_grants",
   }] as const;
   const observedRequiredHistory = rows.filter(
     (row) => row.migration_id <= requiredPostgresSchemaVersion,

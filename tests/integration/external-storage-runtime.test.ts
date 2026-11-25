@@ -2233,7 +2233,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
     }
   });
 
-  test("AUTH-037 AUTH-038 AUTH-039 foundation: Postgres grants widen restricted listings, end removed members' content access, hold the cap, survive concurrent adds, and record one sharing row per real change", async () => {
+  test("AUTH-037 AUTH-038 AUTH-039 AUTH-040 foundation: Postgres grants widen restricted listings, end removed members' content access, hold the cap, survive concurrent adds, and record one sharing row per real change", async () => {
     expect.hasAssertions();
     const ownerIdentity = {
       apiToken: managedTestKey("postgres-grants"),
@@ -2307,8 +2307,8 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       const annaGrant = {displayName: null, grantedAt: changedAt, grantedByPrincipalId: owner, grantee: anna, kind: "email"};
       expect(first).toStrictEqual({active: true, grants: [annaGrant]});
       expect(second).toStrictEqual({active: true, grants: [annaGrant]});
-      expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna")).toBe(true);
-      expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_ben")).toBe(false);
+      expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna", [])).toBe(true);
+      expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_ben", [])).toBe(false);
 
       // The two concurrent adds of one address write one sharing row.
       const sharingRows = async (artifactId: string, includeGrantChanges = true) =>
@@ -2328,6 +2328,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       const listedFor = async (
         restrictedScope: Parameters<typeof repository.listArtifacts>[0]["restrictedScope"],
         sharedWithPrincipalId: string | null = null,
+        sharedWithGroupIds: readonly string[] = [],
       ): Promise<readonly string[]> =>
         (await repository.listArtifacts({
           comments: "all",
@@ -2336,8 +2337,8 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
           ownerPrincipalId: null,
           projectId,
           restrictedScope,
-          sharedWithGroupIds: [],
-      sharedWithPrincipalId,
+          sharedWithGroupIds,
+          sharedWithPrincipalId,
           sort: "newest",
           tags: [],
         })).items.map(({name}) => name).toSorted();
@@ -2414,10 +2415,75 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       expect(await sharingRows(switched.body.artifact.id, false)).toStrictEqual([]);
 
       await identities.deactivateMember(grantInstallationId, "member_anna", changedAt);
-      expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna")).toBe(false);
+      expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna", [])).toBe(false);
       expect(await listedFor({groupIds: [], kind: "owned_or_granted", principalId: "member_anna"})).toStrictEqual([]);
 
-      // Deleting the artifact removes the addresses it was shared with.
+      // Directory groups (AUTH-040): a member of a granted group sees and lists
+      // the artifact, two concurrent adds write one row, people and groups
+      // share the cap, and removing a group ends content access except the
+      // owner's.
+      const dep = {displayName: "Developer Productivity", id: "g-dep"};
+      const changeGroups = (
+        artifactId: string,
+        addGroups: readonly {displayName: string; id: string}[],
+        removeGroups: readonly string[] = [],
+        add: readonly string[] = [],
+      ) => repository.changeArtifactGrants({
+        add, addGroups, artifactId, authorizedByPrincipalId: null, changedAt, principalId: owner, projectId,
+        remove: [], removeGroups,
+      });
+      const [firstGroup] = await Promise.all([
+        changeGroups(switched.body.artifact.id, [dep]),
+        changeGroups(switched.body.artifact.id, [dep]),
+      ]);
+      expect(firstGroup.grants).toStrictEqual([
+        {displayName: dep.displayName, grantedAt: changedAt, grantedByPrincipalId: owner, grantee: dep.id, kind: "group"},
+      ]);
+      const groupRows = async (artifactId: string, includeGrantChanges = true) =>
+        (await sharingRows(artifactId, includeGrantChanges)).filter(({action}) => action.startsWith("grant_group_"));
+      expect(await groupRows(switched.body.artifact.id)).toStrictEqual([
+        {action: "grant_group_add", authorizedByPrincipalId: null, grantee: dep.displayName},
+      ]);
+      expect(await groupRows(switched.body.artifact.id, false)).toStrictEqual([]);
+      expect(await repository.isArtifactGrantee(projectId, switched.body.artifact.id, "member_ben", ["g-dep"])).toBe(true);
+      expect(await repository.isArtifactGrantee(projectId, switched.body.artifact.id, "member_ben", ["g-other"])).toBe(false);
+      expect(await repository.isArtifactGrantee(projectId, switched.body.artifact.id, "member_ben", [])).toBe(false);
+      expect(await listedFor({groupIds: ["g-dep"], kind: "owned_or_granted", principalId: "member_ben"}))
+        .toContain("Switched page");
+      expect(await listedFor({groupIds: [], kind: "owned_or_granted", principalId: "member_ben"}))
+        .not.toContain("Switched page");
+      expect(await listedFor({groupIds: ["g-dep"], kind: "owned_or_granted", principalId: "member_ben"}, "member_ben", ["g-dep"]))
+        .toStrictEqual(["Switched page"]);
+      expect(await listedFor({groupIds: ["g-dep"], kind: "owned_or_granted", principalId: "member_ben"}, "member_ben", []))
+        .toStrictEqual([]);
+      await expect(changeGroups(
+        switched.body.artifact.id,
+        [{displayName: "Architecture Guild", id: "g-guild"}],
+        [],
+        Array.from({length: 99}, (_, index) => `person${index}@example.test`),
+      )).rejects.toMatchObject({_tag: "GrantLimitReached"});
+      expect((await repository.listArtifactGrants(projectId, switched.body.artifact.id)).grants).toHaveLength(1);
+      await database.run(Effect.gen(function*() {
+        const sql = yield* SqlClient;
+        yield* sql.unsafe(
+          `INSERT INTO content_sessions
+             (installation_id, token_digest, principal_id, project_id, artifact_id, version_id,
+              content_token, created_at, expires_at)
+           VALUES ($1, 'group-session-ben', 'member_ben', $2, $3, $4, 'group-token-ben', $5, '2999-01-01T00:00:00.000Z')`,
+          [grantInstallationId, projectId, switched.body.artifact.id, switched.body.version.id, changedAt],
+        );
+      }));
+      await changeGroups(switched.body.artifact.id, [], ["g-absent"]);
+      expect(await holders()).toStrictEqual([owner, owner, "member_ben"].toSorted());
+      await changeGroups(switched.body.artifact.id, [], ["g-dep"]);
+      expect(await holders()).toStrictEqual([owner, owner]);
+      expect(await groupRows(switched.body.artifact.id)).toStrictEqual([
+        {action: "grant_group_add", authorizedByPrincipalId: null, grantee: dep.displayName},
+        {action: "grant_group_remove", authorizedByPrincipalId: null, grantee: dep.displayName},
+      ]);
+      await changeGroups(granted.body.artifact.id, [dep]);
+
+      // Deleting the artifact removes the addresses and groups it was shared with.
       await repository.deleteArtifact({
         artifactId: granted.body.artifact.id,
         authorizedByPrincipalId: null,

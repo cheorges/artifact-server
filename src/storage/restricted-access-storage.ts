@@ -113,10 +113,15 @@ export function sharedWithMemberParameters(
 /**
  * Postgres SQL that is true when an active member of the artifact's
  * installation, whose current email matches one of its grants, has the id
- * in the given placeholder.
+ * in the member placeholder, or when one of the directory groups in the
+ * JSON array of ids in the group placeholder is granted the artifact.
  */
-export function postgresGrantedToMemberSql(artifact: string, memberPlaceholder: string): string {
-  return `EXISTS (
+export function postgresGrantedToMemberSql(
+  artifact: string,
+  memberPlaceholder: string,
+  groupIdsPlaceholder: string,
+): string {
+  return `(EXISTS (
     SELECT 1 FROM artifact_grants grant_row
     JOIN installation_members grantee_member
       ON grantee_member.installation_id = grant_row.installation_id
@@ -125,7 +130,14 @@ export function postgresGrantedToMemberSql(artifact: string, memberPlaceholder: 
       AND grant_row.artifact_id = ${artifact}.id
       AND grant_row.grantee_kind = 'email'
       AND grantee_member.status = 'active'
-      AND grantee_member.id = ${memberPlaceholder}::text)`;
+      AND grantee_member.id = ${memberPlaceholder}::text)
+    OR EXISTS (
+    SELECT 1 FROM artifact_grants group_grant
+    WHERE group_grant.installation_id = ${artifact}.installation_id
+      AND group_grant.artifact_id = ${artifact}.id
+      AND group_grant.grantee_kind = 'group'
+      AND group_grant.grantee IN (
+        SELECT jsonb_array_elements_text(${groupIdsPlaceholder}::jsonb))))`;
 }
 
 /**
