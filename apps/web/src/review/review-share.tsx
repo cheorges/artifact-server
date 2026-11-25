@@ -49,6 +49,8 @@ interface ReviewShareControlProps {
   /** Whether the viewer may add and remove people: the owner or an administrator. */
   readonly canManageGrants: boolean;
   readonly details: ArtifactDetails | null;
+  /** Whether the installation has a directory of groups to share with. */
+  readonly groupSharingAvailable: boolean;
   readonly onArtifactChanged: (artifact: ArtifactDetails["artifact"]) => void;
   /** False when the installation turns public links off. */
   readonly publicLinksAvailable: boolean;
@@ -62,6 +64,7 @@ export function ReviewShareControl({
   canManageAccess,
   canManageGrants,
   details,
+  groupSharingAvailable,
   onArtifactChanged,
   publicLinksAvailable,
   selectedPath,
@@ -473,6 +476,7 @@ export function ReviewShareControl({
                     applies={selectedAccess === "restricted"}
                     artifactId={details.artifact.id}
                     disabled={pending}
+                    groupSharing={groupSharingAvailable}
                     projectId={details.artifact.projectId}
                   />
                 ) : null}

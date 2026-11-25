@@ -2168,6 +2168,45 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+.as-share-groups__options {
+  border: 1px solid var(--as-border);
+  display: grid;
+  list-style: none;
+  margin: 0;
+  max-height: 11rem;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.as-share-groups__options button {
+  align-items: baseline;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 0.78rem;
+  gap: 0.5rem;
+  justify-content: space-between;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  width: 100%;
+}
+
+.as-share-groups__options button:hover,
+.as-share-groups__options button:focus-visible {
+  background: var(--as-surface-raised);
+}
+
+.as-share-groups__mail {
+  color: var(--as-subtle);
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .as-share-access-editor__actions {
   display: flex;
   gap: 0.45rem;

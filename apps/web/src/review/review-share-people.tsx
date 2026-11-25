@@ -2,32 +2,47 @@ import {Cancel01Icon} from "@hugeicons/core-free-icons";
 import {HugeiconsIcon} from "@hugeicons/react";
 import {type FormEvent, useEffect, useState} from "react";
 
-import {api, type ArtifactGrantList} from "@/api/client";
+import {api, type ArtifactGrantList, type GroupReference} from "@/api/client";
+
+import {GroupsWithAccess} from "./review-share-groups.tsx";
 
 interface PeopleWithAccessProps {
   /** Whether the access setting chosen in the dialog lets the grants apply. */
   readonly applies: boolean;
   readonly artifactId: string;
   readonly disabled: boolean;
+  /** Whether the installation has a directory of groups to share with. */
+  readonly groupSharing: boolean;
   readonly projectId: string;
 }
 
-function granteesOf(list: ArtifactGrantList): readonly string[] {
-  return list.grants.map(({grantee}) => grantee);
+type Grants = ArtifactGrantList["grants"];
+
+function addressesOf(grants: Grants): readonly string[] {
+  return grants.filter(({kind}) => kind === "email").map(({grantee}) => grantee);
+}
+
+function groupsOf(grants: Grants): readonly GroupReference[] {
+  return grants
+    .filter(({kind}) => kind === "group")
+    .map(({displayName, grantee}) => ({id: grantee, name: displayName ?? grantee}));
 }
 
 /**
- * The people a restricted artifact is shared with, for its owner or an
- * administrator: add and remove them by exact email address (AUTH-038). The
- * list never says whether an address belongs to a member yet.
+ * The people and directory groups a restricted artifact is shared with, for
+ * its owner or an administrator: people are added and removed by exact email
+ * address (AUTH-038), groups by search where the installation has a
+ * directory (AUTH-040). The list never says whether an address belongs to a
+ * member yet.
  */
 export function PeopleWithAccess({
   applies,
   artifactId,
   disabled,
+  groupSharing,
   projectId,
 }: PeopleWithAccessProps) {
-  const [grantees, setGrantees] = useState<readonly string[] | null>(null);
+  const [grants, setGrants] = useState<Grants | null>(null);
   const [address, setAddress] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -38,7 +53,7 @@ export function PeopleWithAccess({
       try {
         const list = await api.artifactGrants(projectId, artifactId);
         // An add or remove that finished first already holds the newer list.
-        if (current) setGrantees((known) => known ?? granteesOf(list));
+        if (current) setGrants((known) => known ?? list.grants);
       } catch (caught) {
         if (current) {
           setFailure(
@@ -53,11 +68,17 @@ export function PeopleWithAccess({
     };
   }, [artifactId, projectId]);
 
-  const change = async (add: readonly string[], remove: readonly string[]): Promise<boolean> => {
+  const change = async (
+    add: readonly string[],
+    remove: readonly string[],
+    addGroups: readonly GroupReference[] = [],
+    removeGroups: readonly GroupReference[] = [],
+  ): Promise<boolean> => {
     setBusy(true);
     setFailure(null);
     try {
-      setGrantees(granteesOf(await api.changeArtifactGrants(projectId, artifactId, add, remove)));
+      const list = await api.changeArtifactGrants(projectId, artifactId, add, remove, addGroups, removeGroups);
+      setGrants(list.grants);
       return true;
     } catch (caught) {
       setFailure(
@@ -74,7 +95,10 @@ export function PeopleWithAccess({
     if (await change([address], [])) setAddress("");
   };
 
+  const grantees = grants === null ? null : addressesOf(grants);
+
   return (
+    <>
     <fieldset className="as-share-people" data-applies={applies}>
       <legend>People with access</legend>
       {applies ? null : (
@@ -126,5 +150,15 @@ export function PeopleWithAccess({
         Admins can always see it. People are matched by email when they sign in.
       </p>
     </fieldset>
+    {groupSharing ? (
+      <GroupsWithAccess
+        applies={applies}
+        disabled={disabled || busy}
+        groups={grants === null ? [] : groupsOf(grants)}
+        onAdd={(group) => change([], [], [group], [])}
+        onRemove={(group) => change([], [], [], [group])}
+      />
+    ) : null}
+    </>
   );
 }

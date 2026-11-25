@@ -61,10 +61,12 @@ const gitHistoryCapabilitySchema = z.object({
  */
 const deploymentCapabilitiesSchema = z.object({
   gitHistory: gitHistoryCapabilitySchema.default(disabledGitHistoryCapability),
+  groupSharing: z.boolean().default(false),
   linkedArtifacts: z.boolean(),
   publicLinks: z.boolean().default(false),
 }).default({
   gitHistory: disabledGitHistoryCapability,
+  groupSharing: false,
   linkedArtifacts: false,
   publicLinks: false,
 });
@@ -196,14 +198,32 @@ export type AccessSetting = z.infer<typeof accessSettingSchema>;
 const artifactGrantListSchema = z.object({
   active: z.boolean(),
   grants: z.array(z.object({
+    /** The name a group had when it was added; null for a person. */
+    displayName: z.string().nullable().default(null),
     grantedAt: z.string(),
     grantedByPrincipalId: z.string(),
+    /** A person's email address, or a group's directory id. */
     grantee: z.string(),
-    kind: z.literal("email"),
+    kind: z.enum(["email", "group"]),
   })),
 });
-/** The people a restricted artifact is shared with, and whether that applies now. */
+/** The people and groups a restricted artifact is shared with, and whether that applies now. */
 export type ArtifactGrantList = z.infer<typeof artifactGrantListSchema>;
+
+const directoryGroupSchema = z.object({
+  displayName: z.string(),
+  id: z.string(),
+  mail: z.string().nullable(),
+});
+const directoryGroupsSchema = z.object({groups: z.array(directoryGroupSchema)});
+/** One group of the installation's directory, as the group search answers it. */
+export type DirectoryGroup = z.infer<typeof directoryGroupSchema>;
+
+/** A directory group named for a grant change: its id and its exact name. */
+export interface GroupReference {
+  readonly id: string;
+  readonly name: string;
+}
 
 /** Which artifacts the catalog lists. */
 export type ArtifactListScope = "all" | "mine" | "shared_with_me";
@@ -326,6 +346,8 @@ export interface ArtifactAction {
     | "comment_update"
     | "delete"
     | "grant_add"
+    | "grant_group_add"
+    | "grant_group_remove"
     | "grant_remove"
     | "link"
     | "publish"
@@ -433,6 +455,8 @@ const actionSchema: z.ZodType<ArtifactAction> = z.object({
     "comment_update",
     "delete",
     "grant_add",
+    "grant_group_add",
+    "grant_group_remove",
     "grant_remove",
     "link",
     "publish",
@@ -1081,15 +1105,23 @@ export const api = {
     artifactId: string,
     add: readonly string[],
     remove: readonly string[],
+    addGroups: readonly GroupReference[] = [],
+    removeGroups: readonly GroupReference[] = [],
   ) => request(
     artifactGrantListSchema,
     `/api/v1/artifacts/${encodeURIComponent(artifactId)}/grants?${projectQuery(projectId)}`,
     {
-      body: JSON.stringify({ add, remove }),
+      body: JSON.stringify({ add, addGroups, remove, removeGroups }),
       headers: mutationHeaders(),
       method: "PATCH",
     },
   ),
+  /** Directory groups whose name has a word starting with the query, or whose address equals it. */
+  searchDirectoryGroups: async (query: string): Promise<readonly DirectoryGroup[]> =>
+    (await request(
+      directoryGroupsSchema,
+      `/api/v1/directory/groups?${new URLSearchParams({query}).toString()}`,
+    )).groups,
   changeTags: (
     projectId: string,
     artifactId: string,
