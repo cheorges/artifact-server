@@ -792,8 +792,30 @@ export const runPostgresMigrations = Effect.gen(function*() {
       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
       name TEXT NOT NULL
     )`);
+    yield* repairLegacyOwnerAndGrantOrder;
     yield* migrate;
   }));
+});
+
+/**
+ * An earlier build of this fork recorded migration 12 as staged_upload_grant and 13
+ * as artifact_owner. Both steps are independent and are applied together, so a
+ * database that holds both rows in that order only needs their names swapped to
+ * match the current history. Runs under the migration lock, before the Migrator.
+ */
+const repairLegacyOwnerAndGrantOrder = Effect.gen(function*() {
+  const sql = yield* SqlClient;
+  yield* sql.unsafe(`UPDATE artifact_server_postgres_migrations
+    SET name = CASE migration_id WHEN 12 THEN 'artifact_owner' ELSE 'staged_upload_grant' END
+    WHERE migration_id IN (12, 13)
+      AND EXISTS (
+        SELECT 1 FROM artifact_server_postgres_migrations
+        WHERE migration_id = 12 AND name = 'staged_upload_grant'
+      )
+      AND EXISTS (
+        SELECT 1 FROM artifact_server_postgres_migrations
+        WHERE migration_id = 13 AND name = 'artifact_owner'
+      )`);
 });
 
 /** Inspect the migration table without creating it or applying work. */

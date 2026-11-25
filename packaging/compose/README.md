@@ -253,6 +253,11 @@ docker compose --file compose.yaml --file compose.external-storage.yaml \
 Serving containers validate the schema. They never apply a migration during
 startup.
 
+A database migrated by an earlier build that recorded migration 12 as
+`staged_upload_grant` and 13 as `artifact_owner` reports `divergent` in
+`migrate status`. `migrate apply` renames the two history rows to the current
+order before it migrates; run it once before starting serving containers.
+
 ### Start one or more application processes
 
 The scalable package exposes port 8787 only to its Compose network. Start two

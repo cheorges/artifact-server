@@ -334,6 +334,49 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
     }
   });
 
+  test("external-storage foundation: Postgres repairs the earlier upload-grant and owner migration order", async () => {
+    const migrationEnvironment = {
+      ARTIFACT_SERVER_DATABASE_URL: environment.databaseUrl,
+      ARTIFACT_SERVER_INSTALLATION_ID: installationId,
+    };
+    const applied = await runExternalCli(["migrate", "apply"], migrationEnvironment);
+    expect(applied.exitCode).toBe(0);
+    const database = await PostgresDatabase.inspect({
+      applicationName: "artifact-server-legacy-order-test",
+      maxConnections: 1,
+      url: Redacted.make(environment.databaseUrl, {label: "test-database-url"}),
+    });
+    const historyNames = () => database.run(Effect.gen(function*() {
+      const sql = yield* SqlClient;
+      return yield* sql<{readonly migration_id: number; readonly name: string}>`
+        SELECT migration_id, name FROM artifact_server_postgres_migrations
+        WHERE migration_id IN (12, 13) ORDER BY migration_id
+      `.withoutTransform;
+    }));
+    try {
+      await database.run(Effect.gen(function*() {
+        const sql = yield* SqlClient;
+        yield* sql`
+          UPDATE artifact_server_postgres_migrations
+          SET name = CASE migration_id WHEN 12 THEN 'staged_upload_grant' ELSE 'artifact_owner' END
+          WHERE migration_id IN (12, 13)
+        `;
+      }));
+      const legacy = await runExternalCli(["migrate", "status"], migrationEnvironment);
+      expect(JSON.parse(legacy.output)).toMatchObject({compatibility: "divergent"});
+
+      const repaired = await runExternalCli(["migrate", "apply"], migrationEnvironment);
+      expect(repaired.exitCode).toBe(0);
+      expect(JSON.parse(repaired.output)).toMatchObject({compatibility: "current"});
+      expect(await historyNames()).toEqual([
+        {migration_id: 12, name: "artifact_owner"},
+        {migration_id: 13, name: "staged_upload_grant"},
+      ]);
+    } finally {
+      await database.close();
+    }
+  });
+
   test("GIT-010 GIT-013 foundation: Postgres enables Git history and preserves provider identity", async () => {
     const identity = {
       apiToken: managedTestKey("postgres-git-history"),
