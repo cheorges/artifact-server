@@ -845,22 +845,11 @@ const widenRegisteredAgentsStatements = [
 ] as const;
 
 /**
- * Rebuild `registered_agents` without the closed-set kind CHECK and with the
- * capability and activity columns. The kind is validated as a slug in the
- * application layer, so the schema stops constraining it. A rebuild is the
- * only path: SQLite cannot drop a CHECK constraint in place, and a database
- * created before this revision already holds the narrow table, so the shared
- * `CREATE TABLE IF NOT EXISTS` leaves it untouched.
- */
-/**
- * Revision 13: sharing rows name their address and use two new kinds, so the
- * action table is rebuilt with the wider CHECK and a grantee column.
- */
-/**
  * Rebuild the action table with the current kinds and the grantee column,
- * keeping every row. Revision 13 added the column and the two person kinds;
- * revision 14 adds the two group kinds and the column for a group's name, so
- * a revision 13 table keeps its grantee values.
+ * keeping every row, so sharing rows can name their address. Revision 13
+ * added the column and the two person kinds; revision 14 adds the two group
+ * kinds and the column for a group's name, so a revision 13 table keeps its
+ * grantee values.
  */
 const rebuildActionsForGrantsStatements = (keepGrantee: boolean) => [
   `CREATE TABLE actions_upgrade_snapshot AS SELECT
@@ -936,6 +925,14 @@ async function rebuildArtifactGrantsForGroupsIfNeeded(database: D1Database): Pro
   );
 }
 
+/**
+ * Rebuild `registered_agents` without the closed-set kind CHECK and with the
+ * capability and activity columns. The kind is validated as a slug in the
+ * application layer, so the schema stops constraining it. A rebuild is the
+ * only path: SQLite cannot drop a CHECK constraint in place, and a database
+ * created before this revision already holds the narrow table, so the shared
+ * `CREATE TABLE IF NOT EXISTS` leaves it untouched.
+ */
 async function widenRegisteredAgentsIfNeeded(
   database: D1Database,
 ): Promise<void> {
