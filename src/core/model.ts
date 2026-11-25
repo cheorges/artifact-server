@@ -24,6 +24,8 @@ export const artifactActionKinds = {
   commentUpdate: "comment_update",
   delete: "delete",
   grantAdd: "grant_add",
+  grantGroupAdd: "grant_group_add",
+  grantGroupRemove: "grant_group_remove",
   grantRemove: "grant_remove",
   link: "link",
   publish: "publish",

@@ -612,9 +612,10 @@ function makeArtifactManagementService(
         cursor: command.cursor,
         limit,
         ownerPrincipalId: command.scope === "mine" ? command.principal.id : null,
+        sharedWithGroupIds: [],
         sharedWithPrincipalId: command.scope === "shared_with_me" ? command.principal.id : null,
         projectId: project.id,
-        restrictedScope: restrictedArtifactScope(command.principal),
+        restrictedScope: restrictedArtifactScope(command.principal, []),
         search,
         sort,
         tags,
@@ -727,12 +728,14 @@ function makeArtifactManagementService(
       const changedAt = DateTime.formatIso(yield* dependencies.clock.now);
       return yield* dependencies.repository.changeArtifactGrants({
         add,
+        addGroups: [],
         artifactId: artifact.id,
         authorizedByPrincipalId: command.principal.authorizedByPrincipalId,
         changedAt,
         principalId: command.principal.id,
         projectId: artifact.projectId,
         remove,
+        removeGroups: [],
       });
     },
   );

@@ -62,11 +62,11 @@ describe("grant-aware visibility", () => {
   });
 
   test("AUTH-037 foundation: listing includes grants, dispatch does not", () => {
-    expect(restrictedArtifactScope(grantee)).toStrictEqual({kind: "owned_or_granted", principalId: grantee.id});
+    expect(restrictedArtifactScope(grantee, [])).toStrictEqual({groupIds: [], kind: "owned_or_granted", principalId: grantee.id});
     expect(restrictedDispatchScope(grantee)).toStrictEqual({kind: "owned", principalId: grantee.id});
-    expect(restrictedArtifactScope(administrator)).toStrictEqual({kind: "all"});
+    expect(restrictedArtifactScope(administrator, [])).toStrictEqual({kind: "all"});
     expect(restrictedDispatchScope(administrator)).toStrictEqual({kind: "all"});
-    expect(restrictedArtifactScope(service)).toStrictEqual({kind: "none"});
+    expect(restrictedArtifactScope(service, [])).toStrictEqual({kind: "none"});
     expect(restrictedDispatchScope(service)).toStrictEqual({kind: "none"});
   });
 });

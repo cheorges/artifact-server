@@ -36,6 +36,14 @@ export function artifactServerFailureResponse(failure: ArtifactServerFailure) {
       return {code: errorCodes.authorizationDenied, message: failure.message, status: 403};
     case "GrantLimitReached":
       return {code: errorCodes.grantLimitReached, message: failure.message, status: 409};
+    case "GroupSharingUnavailable":
+      return {code: errorCodes.groupSharingUnavailable, message: failure.message, status: 409};
+    case "GroupNotFound":
+      return {code: errorCodes.groupNotFound, message: failure.message, status: 404};
+    case "GroupNameMismatch":
+      return {code: errorCodes.groupNameMismatch, message: failure.message, status: 409};
+    case "DirectoryUnavailable":
+      return {code: errorCodes.directoryUnavailable, message: failure.message, status: 503};
     case "InvalidArtifactGrant":
       return {code: errorCodes.invalidInput, message: failure.message, status: 422};
     case "CommentNotFound":

@@ -78,13 +78,17 @@ export function isOwnerOrHumanAdministrator(
     (artifact.ownerPrincipalId !== null && artifact.ownerPrincipalId === principal.id);
 }
 
-/** The restricted artifacts one principal may list: own and granted ones. */
+/**
+ * The restricted artifacts one principal may list: own ones and those granted
+ * to them or to one of their directory groups.
+ */
 export function restrictedArtifactScope(
   principal: Principal,
+  groupIds: readonly string[],
 ): RestrictedArtifactScope {
   if (isHumanAdministrator(principal)) return {kind: "all"};
   if (principal.kind === principalKinds.human) {
-    return {kind: "owned_or_granted", principalId: principal.id};
+    return {groupIds, kind: "owned_or_granted", principalId: principal.id};
   }
   return {kind: "none"};
 }

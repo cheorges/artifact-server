@@ -243,7 +243,7 @@ export function createApplicationLayer(
   // One grant lookup for every service that decides restricted visibility.
   const grants: ArtifactGrantLookup = {
     isArtifactGrantee: (projectId, artifactId, principalId) => Effect.tryPromise({
-      try: () => adapters.repository.isArtifactGrantee(projectId, artifactId, principalId),
+      try: () => adapters.repository.isArtifactGrantee(projectId, artifactId, principalId, []),
       catch: (cause) => repositoryFailure("isArtifactGrantee", cause),
     }),
   };

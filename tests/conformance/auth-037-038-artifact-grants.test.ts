@@ -63,6 +63,7 @@ const activitySchema = z.object({
 const grantListSchema = z.object({
   active: z.boolean(),
   grants: z.array(z.object({
+    displayName: z.null(),
     grantedAt: z.string(),
     grantedByPrincipalId: z.string(),
     grantee: z.string(),

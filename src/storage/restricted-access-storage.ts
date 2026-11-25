@@ -6,15 +6,17 @@ import type {RestrictedArtifactScope} from "../core/ports.js";
 
 /** One stored grant, as every backend selects it. */
 export const artifactGrantRowSchema = z.object({
+  /** Null for a person, and for backends that do not select the column yet. */
+  displayName: z.string().nullable().default(null),
   grantedAt: z.string(),
   grantedByPrincipalId: z.string(),
   grantee: z.string(),
-  kind: z.literal(artifactGranteeKinds.email),
+  kind: z.enum([artifactGranteeKinds.email, artifactGranteeKinds.group]),
 });
 
 /** The text that tells a member who reached the grant cap. */
 export function grantLimitMessage(maximum: number): string {
-  return `An artifact can be shared with at most ${maximum} people.`;
+  return `An artifact can be shared with at most ${maximum} people and groups.`;
 }
 
 /** The stored pair behind one API access setting. */

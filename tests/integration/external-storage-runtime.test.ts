@@ -2214,6 +2214,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
           ownerPrincipalId: null,
           projectId,
           restrictedScope,
+          sharedWithGroupIds: [],
           sharedWithPrincipalId: null,
           sort: "newest",
           tags: [],
@@ -2293,6 +2294,8 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       });
       const change = (artifactId: string, add: readonly string[], remove: readonly string[] = []) =>
         repository.changeArtifactGrants({
+          addGroups: [],
+          removeGroups: [],
           add, artifactId, authorizedByPrincipalId: null, changedAt, principalId: owner, projectId, remove,
         });
 
@@ -2301,7 +2304,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
         change(granted.body.artifact.id, [anna]),
         change(granted.body.artifact.id, [anna]),
       ]);
-      const annaGrant = {grantedAt: changedAt, grantedByPrincipalId: owner, grantee: anna, kind: "email"};
+      const annaGrant = {displayName: null, grantedAt: changedAt, grantedByPrincipalId: owner, grantee: anna, kind: "email"};
       expect(first).toStrictEqual({active: true, grants: [annaGrant]});
       expect(second).toStrictEqual({active: true, grants: [annaGrant]});
       expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna")).toBe(true);
@@ -2333,18 +2336,19 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
           ownerPrincipalId: null,
           projectId,
           restrictedScope,
-          sharedWithPrincipalId,
+          sharedWithGroupIds: [],
+      sharedWithPrincipalId,
           sort: "newest",
           tags: [],
         })).items.map(({name}) => name).toSorted();
-      expect(await listedFor({kind: "owned_or_granted", principalId: "member_anna"}))
+      expect(await listedFor({groupIds: [], kind: "owned_or_granted", principalId: "member_anna"}))
         .toStrictEqual(["Granted page", "Switched page"]);
       expect(await listedFor({kind: "owned", principalId: "member_anna"})).toStrictEqual(["Switched page"]);
-      expect(await listedFor({kind: "owned_or_granted", principalId: "member_anna"}, "member_anna"))
+      expect(await listedFor({groupIds: [], kind: "owned_or_granted", principalId: "member_anna"}, "member_anna"))
         .toStrictEqual(["Granted page"]);
-      expect(await listedFor({kind: "owned_or_granted", principalId: "member_ben"}, "member_ben"))
+      expect(await listedFor({groupIds: [], kind: "owned_or_granted", principalId: "member_ben"}, "member_ben"))
         .toStrictEqual([]);
-      expect(await listedFor({kind: "owned_or_granted", principalId: owner}, owner)).toStrictEqual([]);
+      expect(await listedFor({groupIds: [], kind: "owned_or_granted", principalId: owner}, owner)).toStrictEqual([]);
 
       // A change above the cap fails and changes nothing.
       await expect(change(
@@ -2411,7 +2415,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
 
       await identities.deactivateMember(grantInstallationId, "member_anna", changedAt);
       expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna")).toBe(false);
-      expect(await listedFor({kind: "owned_or_granted", principalId: "member_anna"})).toStrictEqual([]);
+      expect(await listedFor({groupIds: [], kind: "owned_or_granted", principalId: "member_anna"})).toStrictEqual([]);
 
       // Deleting the artifact removes the addresses it was shared with.
       await repository.deleteArtifact({
@@ -2553,6 +2557,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
           ownerPrincipalId,
           projectId,
           restrictedScope: {kind: "all"},
+          sharedWithGroupIds: [],
           sharedWithPrincipalId: null,
           sort: "newest",
           tags: [],

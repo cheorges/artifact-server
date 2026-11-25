@@ -147,12 +147,20 @@ export interface RestoreArtifactVersion {
   readonly versionId: string;
 }
 
+/** A directory group to grant: its id and the name stored with the grant. */
+export interface GroupGrantChange {
+  readonly displayName: string;
+  readonly id: string;
+}
+
 /**
- * Values used to add and remove email grants of one artifact atomically.
- * Addresses arrive normalized by the application.
+ * Values used to add and remove grants of one artifact atomically: people
+ * by address and directory groups by id. Addresses arrive normalized and
+ * groups verified by the application.
  */
 export interface ChangeArtifactGrants {
   readonly add: readonly string[];
+  readonly addGroups: readonly GroupGrantChange[];
   readonly artifactId: string;
   /** The member whose API key made the change, or null for a direct session. */
   readonly authorizedByPrincipalId: string | null;
@@ -160,6 +168,8 @@ export interface ChangeArtifactGrants {
   readonly principalId: string;
   readonly projectId: string;
   readonly remove: readonly string[];
+  /** Directory ids of the groups to stop sharing with. */
+  readonly removeGroups: readonly string[];
 }
 
 /** Values used to atomically change one artifact's read setting. */
@@ -218,7 +228,12 @@ export type RestrictedArtifactScope =
   | {readonly kind: "all"}
   | {readonly kind: "none"}
   | {readonly kind: "owned"; readonly principalId: string}
-  | {readonly kind: "owned_or_granted"; readonly principalId: string};
+  | {
+    readonly kind: "owned_or_granted";
+    /** Directory groups the principal is a member of; their grants count too. */
+    readonly groupIds: readonly string[];
+    readonly principalId: string;
+  };
 
 /**
  * The restricted artifacts whose threads an agent dispatch may carry. Grants
@@ -243,6 +258,8 @@ export interface ListArtifacts {
    * or every visible one when null.
    */
   readonly sharedWithPrincipalId: string | null;
+  /** Directory groups of that member; ignored when the member is null. */
+  readonly sharedWithGroupIds: readonly string[];
   readonly sort: "comments" | "newest";
   /** Exact normalized tag filters. An artifact matches when it has any selected tag. */
   readonly tags: readonly string[];
@@ -692,8 +709,10 @@ export interface ArtifactRepository {
   /**
    * Add and remove email grants of a live artifact in one transaction and
    * answer the resulting list. Removing a grant from a restricted artifact
-   * ends the content access of members with that email to it. Fails with
-   * `GrantLimitReached`, changing nothing, above the grant cap.
+   * ends the content access of members with that email to it; removing a
+   * group ends it for everyone but the owner and the people granted by
+   * address. Fails with `GrantLimitReached`, changing nothing, when people
+   * and groups together pass the grant cap.
    */
   changeArtifactGrants(command: ChangeArtifactGrants): Promise<ArtifactGrantList>;
   changeTags(command: ChangeArtifactTags): Promise<ArtifactState>;
@@ -728,12 +747,14 @@ export interface ArtifactRepository {
   ): Promise<VersionContent | null>;
   /**
    * Report whether an active member whose current email matches a grant of
-   * the live artifact is this principal.
+   * the live artifact is this principal, or one of the listed directory
+   * groups is granted.
    */
   isArtifactGrantee(
     projectId: string,
     artifactId: string,
     principalId: string,
+    groupIds: readonly string[],
   ): Promise<boolean>;
   listArtifactActions(command: ListArtifactActions): Promise<ArtifactActionPage>;
   /** The grants of a live artifact and whether they apply now. */

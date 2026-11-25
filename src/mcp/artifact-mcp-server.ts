@@ -133,10 +133,11 @@ const declaredFileSchema = z.object({
   size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 }).strict();
 const artifactGrantSchema = z.object({
+  displayName: z.string().nullable(),
   grantedAt: z.string(),
   grantedByPrincipalId: z.string(),
   grantee: z.string(),
-  kind: z.literal("email"),
+  kind: z.enum(["email", "group"]),
 }).strict();
 const artifactGrantListSchema = z.object({
   active: z.boolean(),

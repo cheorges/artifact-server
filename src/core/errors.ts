@@ -22,6 +22,10 @@ export const errorCodes = {
   invalidComment: "INVALID_COMMENT",
   invalidDispatch: "INVALID_DISPATCH",
   grantLimitReached: "GRANT_LIMIT_REACHED",
+  directoryUnavailable: "DIRECTORY_UNAVAILABLE",
+  groupNameMismatch: "GROUP_NAME_MISMATCH",
+  groupNotFound: "GROUP_NOT_FOUND",
+  groupSharingUnavailable: "GROUP_SHARING_UNAVAILABLE",
   invalidInput: "INVALID_INPUT",
   invalidLinkPath: "INVALID_LINK_PATH",
   invalidManifestPath: "INVALID_MANIFEST_PATH",
@@ -163,6 +167,30 @@ export class GrantLimitReached extends Schema.TaggedError<GrantLimitReached>()(
 /** A grant change names a malformed address or adds and removes the same one. */
 export class InvalidArtifactGrant extends Schema.TaggedError<InvalidArtifactGrant>()(
   "InvalidArtifactGrant",
+  messageField,
+) {}
+
+/** The installation has no directory, so artifacts cannot be shared with groups. */
+export class GroupSharingUnavailable extends Schema.TaggedError<GroupSharingUnavailable>()(
+  "GroupSharingUnavailable",
+  messageField,
+) {}
+
+/** A grant change names a group the directory does not have. */
+export class GroupNotFound extends Schema.TaggedError<GroupNotFound>()(
+  "GroupNotFound",
+  messageField,
+) {}
+
+/** A grant change names a group by a name that is not the group's own. */
+export class GroupNameMismatch extends Schema.TaggedError<GroupNameMismatch>()(
+  "GroupNameMismatch",
+  messageField,
+) {}
+
+/** The directory could not be asked or answered something unexpected. */
+export class DirectoryUnavailable extends Schema.TaggedError<DirectoryUnavailable>()(
+  "DirectoryUnavailable",
   messageField,
 ) {}
 
@@ -508,6 +536,10 @@ const artifactServerFailureSchema = Schema.Union([
   LoginAttemptRejected,
   AuthorizationDenied,
   GrantLimitReached,
+  GroupSharingUnavailable,
+  GroupNotFound,
+  GroupNameMismatch,
+  DirectoryUnavailable,
   InvalidArtifactGrant,
   ContentBootstrapRejected,
   ContentSessionRequired,

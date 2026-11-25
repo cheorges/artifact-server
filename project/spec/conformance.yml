@@ -1883,6 +1883,34 @@ requirements:
     depends_on: [AUTH-038]
     evidence: []
 
+  - id: AUTH-040
+    kind: security
+    behavior: The owner or an administrator shares a restricted artifact with directory groups; an active member the directory reports as a member of such a group, nested groups included, gets what a person grant gives, and a directory failure gives no access.
+    owner: authorization
+    source: {file: decisions/0034-grants-to-groups.md, anchor: decision}
+    acceptance:
+      behavior: {id: AUTH-040-B, description: "The owner adds groups through HTTP and MCP by the id and exact name the directory reports; direct and nested members list the artifact under shared with me, open every version, and comment; each addition and removal is one grant_group_add or grant_group_remove activity row naming the group, and the owner reads the groups with their names."}
+      failure: {id: AUTH-040-F, description: "Group members never manage the artifact; nobody but the owner and administrators receives its groups or their activity rows; a failed lookup gives not found while person grants keep working and is not remembered; a person who left a group loses access once the remembered membership expires and a removed group ends content sessions at once; repeated adds and removals of absent groups write no row; a wrong name, an unknown group, an unreachable directory, and an installation without a directory each refuse the change with nothing written; a group missing from the directory gives no access and can still be removed."}
+    deployments: *all
+    status: implementing
+    proof_gap: Tests land in Tasks 2 to 7 of the group grants plan.
+    depends_on: [AUTH-037, AUTH-038, AUTH-039]
+    evidence: []
+
+  - id: AUTH-041
+    kind: security
+    behavior: A signed-in member finds directory groups by the start of a word of their name or by their exact mail address and receives names only; the directory is optional, read-only, and off unless configured.
+    owner: authorization
+    source: {file: decisions/0034-grants-to-groups.md, anchor: group-search}
+    acceptance:
+      behavior: {id: AUTH-041-B, description: "A member searches groups through HTTP and MCP by a word start and by an exact mail address and receives at most 10 groups with id, name, and mail address."}
+      failure: {id: AUTH-041-F, description: "Service principals and anonymous callers are refused; queries shorter than 2 or longer than 64 characters are refused; the answer carries no member data; query text reaches the directory as a literal and cannot change the directory query; groups with hidden membership are not offered."}
+    deployments: *all
+    status: implementing
+    proof_gap: Tests land in Tasks 2 to 7 of the group grants plan.
+    depends_on: [AUTH-040]
+    evidence: []
+
   - id: SEC-001
     kind: security
     behavior: Published websites are treated as untrusted arbitrary browser JavaScript.
