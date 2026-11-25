@@ -112,6 +112,7 @@ const maximumTextDiffBytes = 256 * 1_024;
 const accessSettingSchema = z.enum([
   accessSettings.accountRequired,
   accessSettings.publicLink,
+  accessSettings.restricted,
 ]);
 const artifactIdSchema = z.string().min(1).max(200);
 const projectIdSchema = z.string().min(1).max(200);
@@ -129,6 +130,7 @@ const declaredFileSchema = z.object({
 const artifactRecordSchema = z.object({
   accessSetting: accessSettingSchema,
   createdAt: z.string(),
+  ownerPrincipalId: z.string().nullable(),
   currentVersionId: z.string(),
   deletedAt: z.string().nullable(),
   id: z.string(),
@@ -1296,7 +1298,7 @@ export function createArtifactMcpServer(
     {
       title: "Change artifact visibility",
       description:
-        "Change an artifact between account-required and public-link access without changing its saved files. Public copies already downloaded outside Artifact Server cannot be recalled.",
+        "Change who can see an artifact without changing its saved files: restricted (only its owner and administrators), account_required (every signed-in member), or public_link. Only the owner or an administrator can switch to or from restricted. Public copies already downloaded outside Artifact Server cannot be recalled.",
       inputSchema: z.object({
         accessSetting: accessSettingSchema,
         artifactId: artifactIdSchema,
@@ -1329,7 +1331,7 @@ export function createArtifactMcpServer(
         },
         replayed: state.replayed,
         version: state.version,
-        warning: input.accessSetting === accessSettings.accountRequired
+        warning: input.accessSetting !== accessSettings.publicLink
           ? "New public requests are blocked. Copies already downloaded or cached outside Artifact Server cannot be recalled."
           : null,
       };
@@ -2383,7 +2385,14 @@ function capabilities(
       scope: "project" as const,
     },
     sharing: {
-      modes: [accessSettings.accountRequired, accessSettings.publicLink],
+      // Local mode has one person, so keeping an artifact to oneself means nothing there.
+      modes: mode === "local"
+        ? [accessSettings.accountRequired, accessSettings.publicLink]
+        : [
+          accessSettings.accountRequired,
+          accessSettings.publicLink,
+          accessSettings.restricted,
+        ],
     },
   };
 }

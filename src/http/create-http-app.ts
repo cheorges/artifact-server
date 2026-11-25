@@ -161,6 +161,7 @@ const maximumJsonRequestBytes = 1_500_000;
 const accessSettingSchema = z.enum([
   accessSettings.accountRequired,
   accessSettings.publicLink,
+  accessSettings.restricted,
 ]);
 const artifactTagsSchema = z.array(z.string()).default([]);
 const projectIdSchema = z.string().trim().min(1).max(200);
@@ -2112,7 +2113,7 @@ export function createHttpApp(
           dependencies.contentDomain,
           state,
         ),
-        warning: body.accessSetting === accessSettings.accountRequired
+        warning: body.accessSetting !== accessSettings.publicLink
           ? "New public requests are blocked. Copies already downloaded or cached outside Artifact Server cannot be recalled."
           : null,
       });
