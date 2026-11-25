@@ -75,10 +75,7 @@ test.describe("AUTH-038 in a browser", () => {
       const page = fixture.page;
       // The first read of the list answers what was true before the add, but
       // only after the add has finished.
-      let releaseList = (): void => undefined;
-      const listHeld = new Promise<void>((resolve) => {
-        releaseList = resolve;
-      });
+      const {promise: listHeld, resolve: releaseList} = Promise.withResolvers<void>();
       await page.route(/\/api\/v1\/artifacts\/[^/]+\/grants\?/u, async (route) => {
         if (route.request().method() !== "GET") {
           await route.continue();

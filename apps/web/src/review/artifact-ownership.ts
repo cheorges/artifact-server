@@ -55,12 +55,13 @@ export function accessPillLabel(
 }
 
 /**
- * Whether the interface offers management of this artifact (Make current,
- * Edit tags, Manage access) to a viewer who has management rights at all. A
- * restricted artifact the viewer neither owns nor administers was shared with
- * them to read and comment only, and the server refuses its management.
+ * Whether the access setting leaves management of this artifact (Make
+ * current, Edit tags, Manage access, Send to agent) open to this viewer: not
+ * when it is restricted and the viewer neither owns nor administers it, since
+ * it was then shared with them to read and comment only. It does not check
+ * the viewer's management rights; callers combine it with those.
  */
-export function viewerMayManageArtifact(
+export function restrictionAllowsManagement(
   viewer: OwnershipViewer,
   access: "account_required" | "public_link" | "restricted",
   ownerPrincipalId: string | null,

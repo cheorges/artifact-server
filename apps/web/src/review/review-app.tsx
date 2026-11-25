@@ -66,7 +66,7 @@ import {
   accessPillLabel,
   makeCurrentOwnerNotice,
   type OwnershipViewer,
-  viewerMayManageArtifact,
+  restrictionAllowsManagement,
   viewerOwnsOrAdministersArtifact,
 } from "./artifact-ownership.ts";
 import artifactServerAnimationUrl from "./assets/artifact-server.svg";
@@ -1026,12 +1026,12 @@ function ArtifactReview({
     && viewerOwnsOrAdministersArtifact(session.principal, details.artifact.ownerPrincipalId);
   // A restricted artifact shared with the viewer is theirs to read and comment
   // on, not to manage (AUTH-037).
-  const viewerMayManageThis = details !== null && viewerMayManageArtifact(
+  const restrictionAllowsManaging = details !== null && restrictionAllowsManagement(
     session.principal,
     details.artifact.accessSetting,
     details.artifact.ownerPrincipalId,
   );
-  const canManageThisArtifact = canManageArtifacts && viewerMayManageThis;
+  const canManageThisArtifact = canManageArtifacts && restrictionAllowsManaging;
   // Who an artifact is shared with is for its owner and administrators (AUTH-038).
   const canManageGrants = canManageArtifacts
     && details !== null
@@ -1754,7 +1754,7 @@ function ArtifactReview({
                     <span className="as-focus-controls__count">{openCommentCount}</span>
                   </button>
                   <ReviewShareControl
-                    canManageAccess={viewerMayManageThis}
+                    canManageAccess={restrictionAllowsManaging}
                     canManageGrants={canManageGrants}
                     details={details}
                     key={`focus-share-${details?.artifact.id ?? "empty"}`}
@@ -1829,6 +1829,7 @@ function ArtifactReview({
                   <ReviewCommentsInspector
                     canComment={canComment}
                     canDeleteAny={canDeleteAnyComment}
+                    canDispatch={canComment && restrictionAllowsManaging}
                     principalId={session.principal.id}
                     ref={commentsInspectorRef}
                     session={comments}
@@ -1877,7 +1878,7 @@ function ArtifactReview({
                 </span>
               </button>
               <ReviewShareControl
-                canManageAccess={viewerMayManageThis}
+                canManageAccess={restrictionAllowsManaging}
                 canManageGrants={canManageGrants}
                 details={details}
                 key={`header-share-${details?.artifact.id ?? "empty"}`}
@@ -2087,7 +2088,7 @@ function ArtifactReview({
             ) : inspectorTab === "details" ? (
               <DetailsInspector
                 canDelete={canDeleteArtifact}
-                canEditTags={viewerMayManageThis}
+                canEditTags={restrictionAllowsManaging}
                 canManage={canManageThisArtifact}
                 details={details}
                 linkedArtifacts={session.capabilities.linkedArtifacts}
@@ -2102,6 +2103,7 @@ function ArtifactReview({
               <ReviewCommentsInspector
                 canComment={canComment}
                 canDeleteAny={canDeleteAnyComment}
+                canDispatch={canComment && restrictionAllowsManaging}
                 principalId={session.principal.id}
                 ref={commentsInspectorRef}
                 session={comments}

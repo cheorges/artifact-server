@@ -552,12 +552,15 @@ export interface ReviewCommentsInspectorHandle {
 export const ReviewCommentsInspector = forwardRef<ReviewCommentsInspectorHandle, {
   readonly canDeleteAny: boolean;
   readonly canComment: boolean;
+  /** Whether the viewer may send threads to an agent: commenters who may manage the artifact. */
+  readonly canDispatch: boolean;
   readonly principalId: string;
   readonly session: ReviewCommentSession;
   readonly versionId: string | null;
 }>(function ReviewCommentsInspector({
   canDeleteAny,
   canComment,
+  canDispatch,
   principalId,
   session,
   versionId,
@@ -679,7 +682,7 @@ export const ReviewCommentsInspector = forwardRef<ReviewCommentsInspectorHandle,
       {agentError === null ? null : (
         <p className="as-comments__agent-error">{agentError.message}</p>
       )}
-      {canComment ? (
+      {canDispatch ? (
         <div className="as-comments__send-all">
           <SendToAgentControl
             agents={agents}
@@ -795,7 +798,7 @@ export const ReviewCommentsInspector = forwardRef<ReviewCommentsInspectorHandle,
                         ) : null
                       ) : (
                         <>
-                          {canComment && thread.state === "open" ? (
+                          {canDispatch && thread.state === "open" ? (
                             <SendToAgentControl
                               agents={agents}
                               buttonSize="xs"
