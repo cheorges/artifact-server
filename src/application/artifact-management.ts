@@ -549,6 +549,7 @@ function makeArtifactManagementService(
         cursor: command.cursor,
         limit,
         ownerPrincipalId: command.scope === "mine" ? command.principal.id : null,
+        sharedWithPrincipalId: null,
         projectId: project.id,
         restrictedScope: restrictedArtifactScope(command.principal),
         search,

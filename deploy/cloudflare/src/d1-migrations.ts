@@ -8,7 +8,7 @@ import {defaultGitHistoryMaximumCopiedFiles} from
   "../../../src/git-history/git-history-capability.js";
 
 /** D1 schema revision required by the Cloudflare runtime. */
-export const requiredD1SchemaVersion = 11;
+export const requiredD1SchemaVersion = 12;
 
 /** SQL literal list of every action kind the ledger accepts. */
 const actionKindList = [
@@ -313,6 +313,18 @@ const schemaSql = `
     id TEXT PRIMARY KEY,
     succeeded INTEGER NOT NULL CHECK (succeeded = 1)
   );
+
+  CREATE TABLE IF NOT EXISTS artifact_grants (
+    artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    grantee_kind TEXT NOT NULL CHECK (grantee_kind IN ('email')),
+    grantee TEXT NOT NULL,
+    granted_by_principal_id TEXT NOT NULL,
+    granted_at TEXT NOT NULL,
+    PRIMARY KEY (artifact_id, grantee_kind, grantee)
+  );
+
+  CREATE INDEX IF NOT EXISTS artifact_grants_grantee
+    ON artifact_grants (grantee_kind, grantee, artifact_id);
 
   CREATE TABLE IF NOT EXISTS registered_agents (
     id TEXT PRIMARY KEY,

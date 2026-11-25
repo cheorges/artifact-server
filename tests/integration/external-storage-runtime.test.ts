@@ -497,6 +497,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       await database.run(Effect.gen(function*() {
         const sql = yield* SqlClient;
         const statements = [
+          "DROP TABLE artifact_grants",
           `ALTER TABLE actions
             DROP CONSTRAINT actions_action_check,
             ADD CONSTRAINT actions_action_check
@@ -2212,6 +2213,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
           ownerPrincipalId: null,
           projectId,
           restrictedScope,
+          sharedWithPrincipalId: null,
           sort: "newest",
           tags: [],
         })).items.map(({name}) => name).toSorted();
@@ -2223,6 +2225,164 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       expect(await listedFor({kind: "all"})).toEqual(["Kept page", "Shared page"]);
       expect((await repository.findArtifact(projectId, shared.body.artifact.id))
         ?.accessSetting).toBe("public_link");
+    } finally {
+      await database.close();
+      await server.stop();
+    }
+  });
+
+  test("AUTH-037 AUTH-038 foundation: Postgres grants widen restricted listings, end removed members' content access, hold the cap, and survive concurrent adds", async () => {
+    expect.hasAssertions();
+    const ownerIdentity = {
+      apiToken: managedTestKey("postgres-grants"),
+      installationId: `postgres-grants-${randomUUID()}`,
+    };
+    const server = await startInProcessExternalStorageServer(
+      environment,
+      ownerIdentity,
+    );
+    const [granted, switched] = await Promise.all([
+      publishNew(server.baseUrl, ownerIdentity.apiToken, {
+        content: "<p>granted</p>",
+        idempotencyKey: `grants-granted-${randomUUID()}`,
+        name: "Granted page",
+      }),
+      publishNew(server.baseUrl, ownerIdentity.apiToken, {
+        content: "<p>switched</p>",
+        idempotencyKey: `grants-switched-${randomUUID()}`,
+        name: "Switched page",
+      }),
+    ]);
+    const owner = managedTestPrincipal(ownerIdentity.apiToken).principalId;
+    const {installationId} = ownerIdentity;
+    const projectId = granted.body.artifact.projectId;
+    const changedAt = "2026-11-10T00:00:00.000Z";
+    const anna = "anna@example.test";
+    const database = await PostgresDatabase.open({
+      maxConnections: 4,
+      url: Redacted.make(environment.databaseUrl),
+    }, "validate");
+    try {
+      const identities = new PostgresIdentityRepository(database, installationId);
+      await Promise.all([
+        ["member_anna", anna, "member"],
+        ["member_ben", "ben@example.test", "member"],
+        ["member_root", "root@example.test", "administrator"],
+      ].map(([id, email, role]) => identities.admitMember({
+        createdAt: changedAt,
+        displayName: String(id),
+        email: String(email),
+        id: String(id),
+        installationId,
+        role: role === "administrator" ? "administrator" : "member",
+      })));
+      const repository = await PostgresArtifactRepository.open(database, installationId);
+      await repository.changeAccessSetting({
+        accessSetting: "restricted",
+        artifactId: granted.body.artifact.id,
+        authorizedByPrincipalId: null,
+        createdAt: changedAt,
+        expectedCurrentVersionId: granted.body.version.id,
+        idempotencyKey: `grants-restrict-${randomUUID()}`,
+        inputDigest: "grants-restrict",
+        principalId: owner,
+        projectId,
+      });
+      const change = (artifactId: string, add: readonly string[], remove: readonly string[] = []) =>
+        repository.changeArtifactGrants({add, artifactId, changedAt, principalId: owner, projectId, remove});
+
+      // Two concurrent adds of one address store it once.
+      const [first, second] = await Promise.all([
+        change(granted.body.artifact.id, [anna]),
+        change(granted.body.artifact.id, [anna]),
+      ]);
+      const annaGrant = {grantedAt: changedAt, grantedByPrincipalId: owner, grantee: anna, kind: "email"};
+      expect(first).toStrictEqual({active: true, grants: [annaGrant]});
+      expect(second).toStrictEqual({active: true, grants: [annaGrant]});
+      expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna")).toBe(true);
+      expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_ben")).toBe(false);
+
+      const listedFor = async (
+        restrictedScope: Parameters<typeof repository.listArtifacts>[0]["restrictedScope"],
+        sharedWithPrincipalId: string | null = null,
+      ): Promise<readonly string[]> =>
+        (await repository.listArtifacts({
+          comments: "all",
+          cursor: null,
+          limit: 10,
+          ownerPrincipalId: null,
+          projectId,
+          restrictedScope,
+          sharedWithPrincipalId,
+          sort: "newest",
+          tags: [],
+        })).items.map(({name}) => name).toSorted();
+      expect(await listedFor({kind: "owned_or_granted", principalId: "member_anna"}))
+        .toStrictEqual(["Granted page", "Switched page"]);
+      expect(await listedFor({kind: "owned", principalId: "member_anna"})).toStrictEqual(["Switched page"]);
+      expect(await listedFor({kind: "owned_or_granted", principalId: "member_anna"}, "member_anna"))
+        .toStrictEqual(["Granted page"]);
+      expect(await listedFor({kind: "owned_or_granted", principalId: "member_ben"}, "member_ben"))
+        .toStrictEqual([]);
+      expect(await listedFor({kind: "owned_or_granted", principalId: owner}, owner)).toStrictEqual([]);
+
+      // A change above the cap fails and changes nothing.
+      await expect(change(
+        granted.body.artifact.id,
+        Array.from({length: 100}, (_, index) => `person${index}@example.test`),
+      )).rejects.toMatchObject({_tag: "GrantLimitReached"});
+      expect((await repository.listArtifactGrants(projectId, granted.body.artifact.id)).grants)
+        .toStrictEqual([annaGrant]);
+
+      // Switching to restricted keeps the owner's, an administrator's and a
+      // grantee's content access; removing the grant then ends the grantee's.
+      expect(await change(switched.body.artifact.id, [anna])).toMatchObject({active: false});
+      await database.run(Effect.gen(function*() {
+        const sql = yield* SqlClient;
+        yield* Effect.forEach(["content_sessions", "content_bootstraps"] as const, (table) =>
+          Effect.forEach([owner, "member_anna", "member_ben", "member_root"], (principalId) => sql.unsafe(
+            `INSERT INTO ${table}
+               (installation_id, token_digest, principal_id, project_id, artifact_id, version_id,
+                content_token, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '2999-01-01T00:00:00.000Z')`,
+            [installationId, `${table}-${principalId}`, principalId, projectId, switched.body.artifact.id,
+              switched.body.version.id, `token-${principalId}`, changedAt],
+          ), {discard: true}), {discard: true});
+      }));
+      const holders = () => database.run(Effect.gen(function*() {
+        const sql = yield* SqlClient;
+        const rows = yield* sql.unsafe<object>(
+          `SELECT "principalId" FROM (
+             SELECT principal_id AS "principalId" FROM content_sessions
+             WHERE installation_id = $1 AND artifact_id = $2
+             UNION ALL
+             SELECT principal_id AS "principalId" FROM content_bootstraps
+             WHERE installation_id = $1 AND artifact_id = $2
+           ) AS holders
+           ORDER BY "principalId" COLLATE "C"`,
+          [installationId, switched.body.artifact.id],
+        );
+        return z.array(z.object({principalId: z.string()})).parse(rows).map(({principalId}) => principalId);
+      }));
+      await repository.changeAccessSetting({
+        accessSetting: "restricted",
+        artifactId: switched.body.artifact.id,
+        authorizedByPrincipalId: null,
+        createdAt: changedAt,
+        expectedCurrentVersionId: switched.body.version.id,
+        idempotencyKey: `grants-switch-${randomUUID()}`,
+        inputDigest: "grants-switch",
+        principalId: owner,
+        projectId,
+      });
+      const kept = [owner, owner, "member_anna", "member_anna", "member_root", "member_root"].toSorted();
+      expect(await holders()).toStrictEqual(kept);
+      await change(switched.body.artifact.id, [], [anna]);
+      expect(await holders()).toStrictEqual(kept.filter((principalId) => principalId !== "member_anna"));
+
+      await identities.deactivateMember(installationId, "member_anna", changedAt);
+      expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna")).toBe(false);
+      expect(await listedFor({kind: "owned_or_granted", principalId: "member_anna"})).toStrictEqual([]);
     } finally {
       await database.close();
       await server.stop();
@@ -2343,6 +2503,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
           ownerPrincipalId,
           projectId,
           restrictedScope: {kind: "all"},
+          sharedWithPrincipalId: null,
           sort: "newest",
           tags: [],
         })).items.map(({id}) => id);

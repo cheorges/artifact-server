@@ -640,6 +640,24 @@ const addStagedUploadGrant = Effect.gen(function*() {
   yield* sql.unsafe("ALTER TABLE staged_uploads ADD COLUMN grant_digest TEXT");
 });
 
+const addArtifactGrants = Effect.gen(function*() {
+  const sql = yield* SqlClient;
+  yield* sql.unsafe(`
+    CREATE TABLE artifact_grants (
+      installation_id TEXT NOT NULL,
+      artifact_id TEXT NOT NULL,
+      grantee_kind TEXT NOT NULL CHECK (grantee_kind IN ('email')),
+      grantee TEXT NOT NULL,
+      granted_by_principal_id TEXT NOT NULL,
+      granted_at TEXT NOT NULL,
+      PRIMARY KEY (installation_id, artifact_id, grantee_kind, grantee),
+      FOREIGN KEY (installation_id, artifact_id) REFERENCES artifacts (installation_id, id)
+    )`);
+  yield* sql.unsafe(
+    "CREATE INDEX artifact_grants_grantee ON artifact_grants (installation_id, grantee_kind, grantee, artifact_id)",
+  );
+});
+
 const addArtifactSearchName = Effect.gen(function*() {
   const sql = yield* SqlClient;
   yield* sql.unsafe("ALTER TABLE artifacts ADD COLUMN search_name TEXT");
@@ -698,10 +716,11 @@ const migrationLoader = Migrator.fromRecord({
   "0011_artifact_search_name": addArtifactSearchName,
   "0012_artifact_owner": addArtifactOwner,
   "0013_staged_upload_grant": addStagedUploadGrant,
+  "0014_artifact_grants": addArtifactGrants,
 });
 
 /** Schema revision required by this Artifact Server build. */
-export const requiredPostgresSchemaVersion = 13;
+export const requiredPostgresSchemaVersion = 14;
 
 /** Migration compatibility observed without changing Postgres. */
 export interface PostgresMigrationStatus {
@@ -795,6 +814,9 @@ export const readPostgresMigrationStatus = Effect.gen(function*() {
   }, {
     migration_id: 13,
     name: "staged_upload_grant",
+  }, {
+    migration_id: 14,
+    name: "artifact_grants",
   }] as const;
   const observedRequiredHistory = rows.filter(
     (row) => row.migration_id <= requiredPostgresSchemaVersion,

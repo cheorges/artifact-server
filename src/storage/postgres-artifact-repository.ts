@@ -9,6 +9,7 @@ import {
   CommentNotFound,
   CommentResolved,
   DispatchStateConflict,
+  GrantLimitReached,
   IdempotencyConflict,
   InvalidDispatch,
   ProjectConflict,
@@ -22,6 +23,11 @@ import {
   UploadNotFound,
   VersionNotFound,
 } from "../core/errors.js";
+import {
+  maximumArtifactGrants,
+  type ArtifactGrant,
+  type ArtifactGrantList,
+} from "../core/artifact-grants.js";
 import {
   accessSettings,
   agentBeaconStates,
@@ -74,6 +80,7 @@ import type {
   ArtifactRepository,
   CancelAgentDispatch,
   ChangeArtifactAccessSetting,
+  ChangeArtifactGrants,
   ChangeArtifactTags,
   ClearCommentThreads,
   CommentRepository,
@@ -134,6 +141,9 @@ import {
 } from "./public-link-inventory-row.js";
 import {
   accessSettingSql,
+  artifactGrantRowSchema,
+  grantLimitMessage,
+  postgresGrantedToMemberSql,
   restrictedScopeParameters,
   storedAccessSetting,
 } from "./restricted-access-storage.js";
@@ -1446,7 +1456,8 @@ export class PostgresArtifactRepository implements
             AND deleted_at IS NULL
           RETURNING id, owner_principal_id AS "ownerPrincipalId"`;
         if (!stored.restricted) return update;
-        // Content opened by anyone but the owner stops serving at once.
+        // Content opened by anyone but the owner, an active administrator,
+        // or an active grantee stops serving at once.
         return update.pipe(Effect.tap(() => Effect.forEach(
           ["content_sessions", "content_bootstraps"] as const,
           (table) => sql.unsafe(
@@ -1455,6 +1466,18 @@ export class PostgresArtifactRepository implements
                AND principal_id IS DISTINCT FROM (
                  SELECT owner_principal_id FROM artifacts
                  WHERE installation_id = $1 AND project_id = $2 AND id = $3
+               )
+               AND principal_id NOT IN (
+                 SELECT id FROM installation_members
+                 WHERE installation_id = $1 AND role = 'administrator' AND status = 'active'
+               )
+               AND principal_id NOT IN (
+                 SELECT member.id FROM artifact_grants grant_row
+                 JOIN installation_members member
+                   ON member.installation_id = grant_row.installation_id
+                   AND member.email = grant_row.grantee
+                 WHERE grant_row.installation_id = $1 AND grant_row.artifact_id = $3
+                   AND grant_row.grantee_kind = 'email' AND member.status = 'active'
                )`,
             [installationId, command.projectId, command.artifactId],
           ),
@@ -1462,6 +1485,85 @@ export class PostgresArtifactRepository implements
         )));
       },
     );
+  }
+
+  async listArtifactGrants(projectId: string, artifactId: string): Promise<ArtifactGrantList> {
+    return this.#database.run(Effect.gen({self: this}, function*() {
+      const active = yield* this.#readRestrictedFlag(projectId, artifactId, false);
+      return {active, grants: yield* this.#readGrants(artifactId)};
+    }));
+  }
+
+  async isArtifactGrantee(
+    projectId: string,
+    artifactId: string,
+    principalId: string,
+  ): Promise<boolean> {
+    const installationId = this.#installationId;
+    return this.#database.run(Effect.gen(function*() {
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<object>(
+        `SELECT 1 AS granted FROM artifacts
+         JOIN artifact_grants grant_row
+           ON grant_row.installation_id = artifacts.installation_id
+           AND grant_row.artifact_id = artifacts.id
+           AND grant_row.grantee_kind = 'email'
+         JOIN installation_members member
+           ON member.installation_id = grant_row.installation_id
+           AND member.email = grant_row.grantee
+         WHERE artifacts.installation_id = $1 AND artifacts.project_id = $2
+           AND artifacts.id = $3 AND artifacts.deleted_at IS NULL
+           AND member.id = $4 AND member.status = 'active'
+         LIMIT 1`,
+        [installationId, projectId, artifactId, principalId],
+      );
+      return rows.length > 0;
+    }));
+  }
+
+  async changeArtifactGrants(command: ChangeArtifactGrants): Promise<ArtifactGrantList> {
+    const installationId = this.#installationId;
+    return this.#database.run(Effect.gen({self: this}, function*() {
+      const sql = yield* SqlClient;
+      return yield* sql.withTransaction(Effect.gen({self: this}, function*() {
+        // The row lock serializes grant changes on one artifact, so the cap holds.
+        const active = yield* this.#readRestrictedFlag(command.projectId, command.artifactId, true);
+        yield* Effect.forEach(command.add, (email) => sql.unsafe(
+          `INSERT INTO artifact_grants
+             (installation_id, artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
+           VALUES ($1, $2, 'email', $3, $4, $5)
+           ON CONFLICT DO NOTHING`,
+          [installationId, command.artifactId, email, command.principalId, command.changedAt],
+        ), {discard: true});
+        yield* Effect.forEach(command.remove, (email) => Effect.gen(function*() {
+          yield* sql.unsafe(
+            `DELETE FROM artifact_grants
+             WHERE installation_id = $1 AND artifact_id = $2
+               AND grantee_kind = 'email' AND grantee = $3`,
+            [installationId, command.artifactId, email],
+          );
+          if (!active) return;
+          yield* Effect.forEach(["content_sessions", "content_bootstraps"] as const, (table) => sql.unsafe(
+            `DELETE FROM ${table}
+             WHERE installation_id = $1 AND project_id = $2 AND artifact_id = $3
+               AND principal_id IN (
+                 SELECT id FROM installation_members WHERE installation_id = $1 AND email = $4
+               )`,
+            [installationId, command.projectId, command.artifactId, email],
+          ), {discard: true});
+        }), {discard: true});
+        const countRows = yield* sql.unsafe<object>(
+          `SELECT count(*)::int AS count FROM artifact_grants
+           WHERE installation_id = $1 AND artifact_id = $2`,
+          [installationId, command.artifactId],
+        );
+        const {count} = z.object({count: z.number().int().nonnegative()}).parse(countRows[0]);
+        if (count > maximumArtifactGrants) {
+          return yield* new GrantLimitReached({message: grantLimitMessage(maximumArtifactGrants)});
+        }
+        return {active, grants: yield* this.#readGrants(command.artifactId)};
+      }));
+    }));
   }
 
   async changeTags(command: ChangeArtifactTags): Promise<ArtifactState> {
@@ -1576,6 +1678,43 @@ export class PostgresArtifactRepository implements
         );
       }));
     }));
+  }
+
+  /** Whether a live artifact is restricted; fails like a missing artifact otherwise. */
+  #readRestrictedFlag(projectId: string, artifactId: string, lock: boolean) {
+    const installationId = this.#installationId;
+    return Effect.gen(function*() {
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<object>(
+        `SELECT restricted FROM artifacts
+         WHERE installation_id = $1 AND project_id = $2 AND id = $3 AND deleted_at IS NULL
+         ${lock ? "FOR UPDATE" : ""}`,
+        [installationId, projectId, artifactId],
+      );
+      const row = z.object({restricted: z.boolean()}).nullable().parse(rows[0] ?? null);
+      if (row === null) {
+        return yield* new ArtifactNotFound({message: "The artifact does not exist."});
+      }
+      return row.restricted;
+    });
+  }
+
+  /** The grants of one artifact in byte order of the address, as SQLite sorts them. */
+  #readGrants(artifactId: string) {
+    const installationId = this.#installationId;
+    return Effect.gen(function*() {
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<object>(
+        `SELECT grantee, grantee_kind AS kind, granted_at AS "grantedAt",
+                granted_by_principal_id AS "grantedByPrincipalId"
+         FROM artifact_grants
+         WHERE installation_id = $1 AND artifact_id = $2
+         ORDER BY grantee COLLATE "C"`,
+        [installationId, artifactId],
+      );
+      const grants: readonly ArtifactGrant[] = z.array(artifactGrantRowSchema).parse(rows);
+      return grants;
+    });
   }
 
   async findArtifact(
@@ -1721,10 +1860,13 @@ export class PostgresArtifactRepository implements
       const limitPlaceholder = command.sort === "comments" ? "$8" : "$7";
       // Appended after the limit so the existing placeholders keep their numbers.
       queryParameters.push(...restrictedScopeParameters(command.restrictedScope));
-      const restrictedAllPlaceholder = `$${queryParameters.length - 1}`;
-      const restrictedOwnerPlaceholder = `$${queryParameters.length}`;
+      const restrictedAllPlaceholder = `$${queryParameters.length - 2}`;
+      const restrictedOwnerPlaceholder = `$${queryParameters.length - 1}`;
+      const restrictedGranteePlaceholder = `$${queryParameters.length}`;
       queryParameters.push(command.ownerPrincipalId);
       const ownerFilterPlaceholder = `$${queryParameters.length}`;
+      queryParameters.push(command.sharedWithPrincipalId);
+      const sharedWithPlaceholder = `$${queryParameters.length}`;
       const rows = yield* sql.unsafe<object>(
         `SELECT * FROM (
           SELECT id, project_id AS "projectId", name,
@@ -1748,7 +1890,11 @@ export class PostgresArtifactRepository implements
           WHERE installation_id = $1 AND project_id = $2
             AND deleted_at IS NULL
             AND (NOT restricted OR ${restrictedAllPlaceholder}::int = 1
-              OR owner_principal_id = ${restrictedOwnerPlaceholder}::text)
+              OR owner_principal_id = ${restrictedOwnerPlaceholder}::text
+              OR ${postgresGrantedToMemberSql("artifacts", restrictedGranteePlaceholder)})
+            AND (${sharedWithPlaceholder}::text IS NULL OR (restricted
+              AND owner_principal_id IS DISTINCT FROM ${sharedWithPlaceholder}::text
+              AND ${postgresGrantedToMemberSql("artifacts", sharedWithPlaceholder)}))
             AND (${ownerFilterPlaceholder}::text IS NULL
               OR owner_principal_id = ${ownerFilterPlaceholder}::text)
             AND ($3::text IS NULL

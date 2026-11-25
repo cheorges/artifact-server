@@ -38,6 +38,7 @@ import type {
   VersionRecord,
   VersionContent,
 } from "./model.js";
+import type {ArtifactGrantList} from "./artifact-grants.js";
 
 export interface StoredBlob {
   readonly sha256: string;
@@ -146,6 +147,19 @@ export interface RestoreArtifactVersion {
   readonly versionId: string;
 }
 
+/**
+ * Values used to add and remove email grants of one artifact atomically.
+ * Addresses arrive normalized by the application.
+ */
+export interface ChangeArtifactGrants {
+  readonly add: readonly string[];
+  readonly artifactId: string;
+  readonly changedAt: string;
+  readonly principalId: string;
+  readonly projectId: string;
+  readonly remove: readonly string[];
+}
+
 /** Values used to atomically change one artifact's read setting. */
 export interface ChangeArtifactAccessSetting {
   readonly accessSetting: AccessSetting;
@@ -216,6 +230,11 @@ export interface ListArtifacts {
   readonly restrictedScope: RestrictedArtifactScope;
   /** Normalized name-substring or exact-tag search, when supplied. */
   readonly search?: string | null;
+  /**
+   * Keep only restricted artifacts this member does not own and is granted,
+   * or every visible one when null.
+   */
+  readonly sharedWithPrincipalId: string | null;
   readonly sort: "comments" | "newest";
   /** Exact normalized tag filters. An artifact matches when it has any selected tag. */
   readonly tags: readonly string[];
@@ -657,6 +676,13 @@ export interface ArtifactRepository {
   changeAccessSetting(
     command: ChangeArtifactAccessSetting,
   ): Promise<ArtifactAccessSettingChange>;
+  /**
+   * Add and remove email grants of a live artifact in one transaction and
+   * answer the resulting list. Removing a grant from a restricted artifact
+   * ends the content access of members with that email to it. Fails with
+   * `GrantLimitReached`, changing nothing, above the grant cap.
+   */
+  changeArtifactGrants(command: ChangeArtifactGrants): Promise<ArtifactGrantList>;
   changeTags(command: ChangeArtifactTags): Promise<ArtifactState>;
   deleteArtifact(command: DeleteArtifact): Promise<ArtifactDeletion>;
   findArtifact(projectId: string, artifactId: string): Promise<ArtifactRecord | null>;
@@ -687,7 +713,18 @@ export interface ArtifactRepository {
     path: string,
     fallback: "entry" | "none",
   ): Promise<VersionContent | null>;
+  /**
+   * Report whether an active member whose current email matches a grant of
+   * the live artifact is this principal.
+   */
+  isArtifactGrantee(
+    projectId: string,
+    artifactId: string,
+    principalId: string,
+  ): Promise<boolean>;
   listArtifactActions(command: ListArtifactActions): Promise<ArtifactActionPage>;
+  /** The grants of a live artifact and whether they apply now. */
+  listArtifactGrants(projectId: string, artifactId: string): Promise<ArtifactGrantList>;
   listArtifacts(command: ListArtifacts): Promise<ArtifactPage>;
   listArtifactVersions(
     projectId: string,

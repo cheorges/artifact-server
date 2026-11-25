@@ -11,6 +11,7 @@ import {
   CommentNotFound,
   CommentResolved,
   DispatchStateConflict,
+  GrantLimitReached,
   IdempotencyConflict,
   InvalidDispatch,
   ProjectArchived,
@@ -24,6 +25,11 @@ import {
   UploadNotFound,
   VersionNotFound,
 } from "../../../src/core/errors.js";
+import {
+  maximumArtifactGrants,
+  type ArtifactGrant,
+  type ArtifactGrantList,
+} from "../../../src/core/artifact-grants.js";
 import {principalKinds} from "../../../src/core/identity.js";
 import type {
   ProjectGitHistoryProgress,
@@ -34,7 +40,11 @@ import {normalizeArtifactSearchText} from
   "../../../src/application/artifact-tags.js";
 import {
   accessSettingSql,
+  artifactGrantRowSchema,
+  grantLimitMessage,
   restrictedScopeParameters,
+  restrictedScopeSql,
+  sharedWithMemberSql,
   storedAccessSetting,
 } from "../../../src/storage/restricted-access-storage.js";
 import {
@@ -86,6 +96,7 @@ import type {
   ArtifactRepository,
   CancelAgentDispatch,
   ChangeArtifactAccessSetting,
+  ChangeArtifactGrants,
   ChangeArtifactTags,
   ClearCommentThreads,
   CommentRepository,
@@ -734,6 +745,14 @@ export function createD1ArtifactRepository(
     const artifact = await readArtifactOrNull(projectId, artifactId);
     if (artifact === null) throw new ArtifactNotFound({message: "The artifact does not exist."});
     return artifact;
+  };
+  const readGrants = async (artifactId: string): Promise<readonly ArtifactGrant[]> => {
+    const result = await database.prepare(`
+      SELECT grantee, grantee_kind AS kind, granted_at AS grantedAt,
+             granted_by_principal_id AS grantedByPrincipalId
+      FROM artifact_grants WHERE artifact_id = ? ORDER BY grantee
+    `).bind(artifactId).all<z.input<typeof artifactGrantRowSchema>>();
+    return result.results.map((row) => artifactGrantRowSchema.parse(row));
   };
   const readVersionOrNull = async (
     projectId: string,
@@ -1427,7 +1446,7 @@ export function createD1ArtifactRepository(
       JOIN artifacts artifact ON artifact.id = thread.artifact_id
       WHERE thread.installation_id = ? AND thread.project_id = ?
         AND thread.id IN (${placeholders})
-        AND (artifact.restricted = 0 OR ? = 1 OR artifact.owner_principal_id = ?)
+        AND ${restrictedScopeSql("artifact")}
     `).bind(
       command.installationId,
       command.projectId,
@@ -2509,7 +2528,8 @@ export function createD1ArtifactRepository(
             ) AS versionCount
           FROM artifacts
           WHERE project_id = ? AND deleted_at IS NULL
-            AND (restricted = 0 OR ? = 1 OR owner_principal_id = ?)
+            AND ${restrictedScopeSql("artifacts")}
+            AND ${sharedWithMemberSql("artifacts")}
             AND (? IS NULL OR owner_principal_id = ?)
             AND (? IS NULL
               OR instr(search_name, ?) > 0
@@ -2529,6 +2549,9 @@ export function createD1ArtifactRepository(
       `).bind(
         command.projectId,
         ...restrictedScopeParameters(command.restrictedScope),
+        command.sharedWithPrincipalId,
+        command.sharedWithPrincipalId,
+        command.sharedWithPrincipalId,
         command.ownerPrincipalId,
         command.ownerPrincipalId,
         command.search ?? null,
@@ -2682,23 +2705,111 @@ export function createD1ArtifactRepository(
       return content;
     },
 
+    listArtifactGrants: async (projectId: string, artifactId: string): Promise<ArtifactGrantList> => {
+      const artifact = await readArtifact(projectId, artifactId);
+      return {
+        active: artifact.accessSetting === accessSettings.restricted,
+        grants: await readGrants(artifactId),
+      };
+    },
+
+    isArtifactGrantee: async (projectId: string, artifactId: string, principalId: string) => {
+      const row = await database.prepare(`
+        SELECT 1 AS granted FROM artifacts
+        JOIN artifact_grants grant_row
+          ON grant_row.artifact_id = artifacts.id AND grant_row.grantee_kind = 'email'
+        JOIN installation_members member ON member.email = grant_row.grantee
+        WHERE artifacts.project_id = ? AND artifacts.id = ? AND artifacts.deleted_at IS NULL
+          AND member.id = ? AND member.status = 'active'
+        LIMIT 1
+      `).bind(projectId, artifactId, principalId).first();
+      return row !== null;
+    },
+
+    changeArtifactGrants: async (command: ChangeArtifactGrants): Promise<ArtifactGrantList> => {
+      const artifact = await readArtifact(command.projectId, command.artifactId);
+      const restricted = artifact.accessSetting === accessSettings.restricted;
+      // One JSON parameter per list keeps every statement far below D1's bound
+      // parameter limit, and the batch at a fixed number of statements.
+      const added = JSON.stringify(command.add);
+      const removed = JSON.stringify(command.remove);
+      const revocations = restricted
+        ? ["content_sessions", "content_bootstraps"].map((table) => database.prepare(`
+          DELETE FROM ${table}
+          WHERE project_id = ? AND artifact_id = ?
+            AND principal_id IN (
+              SELECT id FROM installation_members
+              WHERE email IN (SELECT value FROM json_each(?))
+            )
+        `).bind(command.projectId, command.artifactId, removed))
+        : [];
+      try {
+        await database.batch([
+          // The batch applies only while the artifact is live and as restricted
+          // as it was read, so the revocations above match its setting.
+          ...mutationGuardStatements(
+            `grants:${command.projectId}:${command.artifactId}:live`,
+            `SELECT 1 FROM artifacts
+             WHERE project_id = ? AND id = ? AND deleted_at IS NULL AND restricted = ?`,
+            [command.projectId, command.artifactId, restricted ? 1 : 0],
+          ),
+          database.prepare(`
+            INSERT INTO artifact_grants
+              (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
+            SELECT ?, 'email', value, ?, ? FROM json_each(?) WHERE true
+            ON CONFLICT DO NOTHING
+          `).bind(command.artifactId, command.principalId, command.changedAt, added),
+          database.prepare(`
+            DELETE FROM artifact_grants
+            WHERE artifact_id = ? AND grantee_kind = 'email'
+              AND grantee IN (SELECT value FROM json_each(?))
+          `).bind(command.artifactId, removed),
+          ...revocations,
+          ...mutationGuardStatements(
+            `grants:${command.projectId}:${command.artifactId}:cap`,
+            "SELECT 1 WHERE (SELECT count(*) FROM artifact_grants WHERE artifact_id = ?) <= ?",
+            [command.artifactId, maximumArtifactGrants],
+          ),
+        ]);
+      } catch (cause) {
+        if (!(cause instanceof Error && /constraint/iu.test(cause.message))) throw cause;
+        const current = await readArtifact(command.projectId, command.artifactId);
+        if ((current.accessSetting === accessSettings.restricted) !== restricted) {
+          throw changedDuringManagement();
+        }
+        throw new GrantLimitReached({message: grantLimitMessage(maximumArtifactGrants)});
+      }
+      return {active: restricted, grants: await readGrants(command.artifactId)};
+    },
+
     changeAccessSetting: async (command: ChangeArtifactAccessSetting) => {
       const replay = await managementReplay(command, artifactActionKinds.changeAccess);
       if (replay !== null) return {...replay, previousAccessSetting: null};
       const artifact = await readArtifact(command.projectId, command.artifactId);
       assertCurrent(artifact, command.expectedCurrentVersionId);
       const stored = storedAccessSetting(command.accessSetting);
-      // Content opened by anyone but the owner stops serving in the same batch.
+      // Content opened by anyone but the owner, an active administrator, or an
+      // active grantee stops serving in the same batch.
       const revocations = stored.restricted
         ? ["content_sessions", "content_bootstraps"].map((table) => database.prepare(`
           DELETE FROM ${table}
           WHERE project_id = ? AND artifact_id = ?
-            AND (? IS NULL OR principal_id <> ?)
+            AND principal_id IS NOT ?
+            AND principal_id NOT IN (
+              SELECT id FROM installation_members
+              WHERE role = 'administrator' AND status = 'active'
+            )
+            AND principal_id NOT IN (
+              SELECT member.id FROM artifact_grants grant_row
+              JOIN installation_members member ON member.email = grant_row.grantee
+              WHERE grant_row.artifact_id = ? AND grant_row.grantee_kind = 'email'
+                AND member.status = 'active'
+            )
         `).bind(
           command.projectId,
           command.artifactId,
           artifact.ownerPrincipalId,
-          artifact.ownerPrincipalId,
+          command.artifactId,
         ))
         : [];
       return applyManagementMutation<ArtifactAccessSettingChange>(command, artifactActionKinds.changeAccess, [
