@@ -37,7 +37,8 @@ export function PeopleWithAccess({
     const load = async (): Promise<void> => {
       try {
         const list = await api.artifactGrants(projectId, artifactId);
-        if (current) setGrantees(granteesOf(list));
+        // An add or remove that finished first already holds the newer list.
+        if (current) setGrantees((known) => known ?? granteesOf(list));
       } catch (caught) {
         if (current) {
           setFailure(

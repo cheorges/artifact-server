@@ -60,6 +60,60 @@ test.describe("AUTH-038 in a browser", () => {
     }
   });
 
+  test("AUTH-038 in a browser: an address added while the list is still loading stays listed", async ({browser}) => {
+    const fixture = await startBrowserFixture(browser);
+    try {
+      const published = await publishNew(fixture.server, fixture.installation, {
+        accessSetting: "account_required",
+        content: "<!doctype html><title>Slow list</title><p>Slow list</p>",
+        idempotencyKey: "auth-038-browser-slow-list",
+        mediaType: "text/html; charset=utf-8",
+        name: "Slow list",
+        path: "index.html",
+      });
+      await localLogin(fixture);
+      const page = fixture.page;
+      // The first read of the list answers what was true before the add, but
+      // only after the add has finished.
+      let releaseList = (): void => undefined;
+      const listHeld = new Promise<void>((resolve) => {
+        releaseList = resolve;
+      });
+      await page.route(/\/api\/v1\/artifacts\/[^/]+\/grants\?/u, async (route) => {
+        if (route.request().method() !== "GET") {
+          await route.continue();
+          return;
+        }
+        await listHeld;
+        await route.fulfill({json: {active: false, grants: []}});
+      });
+      await page.goto(
+        `${fixture.server.baseUrl}/review?project=prj_default&artifact=${published.body.artifact.id}&version=${published.body.version.id}`,
+      );
+      await page.locator(".as-preview-header__actions")
+        .getByRole("button", {exact: true, name: "Share"})
+        .click();
+      const share = page.locator(".as-share-popover[data-open]");
+      await share.getByRole("button", {name: "Manage access"}).click();
+      const people = share.getByRole("group", {name: "People with access"});
+
+      await people.getByRole("textbox", {name: "Email address"}).fill("ben@example.test");
+      const added = page.waitForResponse((response) =>
+        new URL(response.url()).pathname.endsWith("/grants") && response.request().method() === "PATCH");
+      await people.getByRole("button", {exact: true, name: "Add"}).click();
+      expect((await added).status()).toBe(200);
+      await expect(people.getByRole("listitem")).toHaveText(["ben@example.test"]);
+
+      const listed = page.waitForResponse((response) =>
+        new URL(response.url()).pathname.endsWith("/grants") && response.request().method() === "GET");
+      releaseList();
+      await listed;
+      await expect(people.getByRole("listitem")).toHaveText(["ben@example.test"]);
+    } finally {
+      await stopBrowserFixture(fixture);
+    }
+  });
+
   test("AUTH-037 in a browser: the Shared with me filter lists only restricted pages others shared with the viewer", async ({browser}) => {
     const fixture = await startBrowserFixture(browser);
     try {
