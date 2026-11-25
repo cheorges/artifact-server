@@ -47,3 +47,10 @@ export const maximumGroupSearchCharacters = 64;
 
 /** How long one caller's group ids are remembered per process. */
 export const groupMembershipCacheMilliseconds = 5 * 60 * 1_000;
+
+/**
+ * How long a caller whose lookup failed is treated as a member of no group
+ * before the directory is asked again, so a failing directory is not asked
+ * on every request.
+ */
+export const groupLookupBackoffMilliseconds = 30 * 1_000;

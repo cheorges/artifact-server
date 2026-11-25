@@ -250,6 +250,7 @@ export function createApplicationLayer(
   const groupMembership = createGroupMembership({
     directory: groupSharing?.directory ?? null,
     now: () => adapters.clock.now().getTime(),
+    reportFailure: (reason) => reportDirectoryFailure("membership", reason),
     subjectOf: (principalId) => groupSharing === null
       ? Promise.resolve(null)
       : adapters.identityRepository.findExternalSubject(
@@ -1265,12 +1266,30 @@ function combineAbortSignals(
     : AbortSignal.any([fiberSignal, deadlineSignal]);
 }
 
-/** Run one directory call; anything it rejects with is "directory unavailable". */
+/**
+ * Tell the operator why the directory could not be asked. The reason comes
+ * from the directory adapter, which names an HTTP status at most.
+ */
+function reportDirectoryFailure(request: "group" | "membership", reason: string): Effect.Effect<void> {
+  return Effect.logWarning("Directory request failed; no access is given through groups.").pipe(
+    Effect.annotateLogs({reason, request}),
+  );
+}
+
+/**
+ * Run one directory call. Anything it rejects with is "directory
+ * unavailable" for the caller, and its reason goes to the log.
+ */
 function directoryEffect<A>(run: () => Promise<A>): Effect.Effect<A, DirectoryUnavailable> {
   return Effect.tryPromise({
     try: run,
-    catch: () => new DirectoryUnavailable({message: "The directory cannot be reached. Try again in a moment."}),
-  });
+    catch: (cause) => cause instanceof Error ? cause.message : "The request failed.",
+  }).pipe(
+    Effect.tapError((reason) => reportDirectoryFailure("group", reason)),
+    Effect.mapError(() =>
+      new DirectoryUnavailable({message: "The directory cannot be reached. Try again in a moment."})
+    ),
+  );
 }
 
 function identityEffect<A>(

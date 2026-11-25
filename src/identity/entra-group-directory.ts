@@ -3,6 +3,7 @@ import {z} from "zod";
 import {DirectoryUnavailable} from "../core/errors.js";
 import {
   maximumGroupSearchResults,
+  minimumGroupSearchCharacters,
   type DirectoryGroup,
   type GroupDirectory,
 } from "../core/group-directory.js";
@@ -155,7 +156,9 @@ export function createEntraGroupDirectory(input: EntraGroupDirectoryInput): Grou
         url.searchParams.set("$filter", `mail eq '${query.replaceAll("'", "''")}'`);
       } else {
         // The search clause is one quoted token; quotes and backslashes cannot be part of it.
-        url.searchParams.set("$search", `"displayName:${query.replaceAll(/["\\]/gu, "")}"`);
+        const words = query.replaceAll(/["\\]/gu, "").trim();
+        if (words.length < minimumGroupSearchCharacters) return [];
+        url.searchParams.set("$search", `"displayName:${words}"`);
         url.searchParams.set("$count", "true");
       }
       const page = await readPage(url, groupPageSchema);

@@ -73,6 +73,12 @@ describe("the Entra group directory", () => {
     await directory.searchGroups("it's@example.test");
     expect(graphRequests().at(-1)?.query.get("$filter")).toBe("mail eq 'it''s@example.test'");
 
+    // Text that is only quotes and backslashes leaves nothing to search for.
+    const before = graphRequests().length;
+    expect(await directory.searchGroups('""')).toStrictEqual([]);
+    expect(await directory.searchGroups('"\\a')).toStrictEqual([]);
+    expect(graphRequests()).toHaveLength(before);
+
     expect(await directory.searchGroups('a"b\\c" OR "displayName:x')).toStrictEqual([]);
     expect(graphRequests().at(-1)?.query.get("$search")).toBe('"displayName:abc OR displayName:x"');
   });

@@ -54,7 +54,7 @@ import {
   restrictedArtifactScope,
 } from "../core/artifact-visibility.js";
 import { parseEmailAddress } from "../core/email-address.js";
-import { type Principal, principalKinds } from "../core/identity.js";
+import { isHumanAdministrator, type Principal, principalKinds } from "../core/identity.js";
 import {
   isPubliclyReadable,
   type PublicLinkPolicy,
@@ -668,7 +668,13 @@ function makeArtifactManagementService(
       if (command.scope === "shared_with_me" && command.principal.kind !== principalKinds.human) {
         return {items: [], nextCursor: null};
       }
-      const groupIds = command.principal.kind === principalKinds.human
+      // Groups matter only where a grant can: never for a service principal,
+      // for one's own artifacts, or for an administrator, who sees every
+      // artifact anyway, unless they ask what is shared with them.
+      const groupsMatter = command.principal.kind === principalKinds.human &&
+        (command.scope === "shared_with_me" ||
+          (command.scope !== "mine" && !isHumanAdministrator(command.principal)));
+      const groupIds = groupsMatter
         ? yield* dependencies.groups.groupIdsOf(command.principal.id)
         : [];
       return yield* dependencies.repository.listArtifacts({

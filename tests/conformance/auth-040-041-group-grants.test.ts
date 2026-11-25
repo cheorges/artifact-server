@@ -16,7 +16,10 @@ import {
 import {afterEach, beforeEach, describe, expect, test} from "vitest";
 import {z} from "zod";
 
-import {groupMembershipCacheMilliseconds} from "../../src/core/group-directory.js";
+import {
+  groupLookupBackoffMilliseconds,
+  groupMembershipCacheMilliseconds,
+} from "../../src/core/group-directory.js";
 import {signInAdministrator} from "../support/agent-dispatch.js";
 import {createFakeGroupDirectory, type FakeGroupDirectory} from "../support/fake-group-directory.js";
 import {publishNew, publishVersion} from "../support/publishing.js";
@@ -176,6 +179,10 @@ describe("grants to directory groups on restricted artifacts", () => {
     });
     expect(next.response.status).toBe(201);
 
+    // Listing one's own artifacts never needs the directory.
+    expect(await listedNames(ada, "mine")).toContain("Ada's team plan");
+    expect(directory.calls.membership).toBe(0);
+
     const overHttp = await change(ada, draft.id, {addGroups: [dep]});
     expect(overHttp.status).toBe(200);
     const overMcp = grantListSchema.parse(await callTool(ada, "artifact_set_grants", {
@@ -252,7 +259,14 @@ describe("grants to directory groups on restricted artifacts", () => {
     now += groupMembershipCacheMilliseconds;
     directory.failNext(1);
     expect((await request(ben, "GET", draft.id)).status).toBe(missing);
+    expect(await listedNames(ben, "shared_with_me")).toStrictEqual([]);
     expect((await request(erin, "GET", draft.id)).status).toBe(200);
+    expect(await listedNames(erin, "shared_with_me")).toStrictEqual(["Ada's team secret"]);
+    // A failing directory is not asked again at once; after the pause Ben is back.
+    const askedWhileFailing = directory.calls.membership;
+    expect((await request(ben, "GET", draft.id)).status).toBe(missing);
+    expect(directory.calls.membership).toBe(askedWhileFailing);
+    now += groupLookupBackoffMilliseconds;
     expect((await request(ben, "GET", draft.id)).status).toBe(200);
 
     // Leaving the group ends access once the remembered membership expires.
@@ -467,7 +481,7 @@ describe("grants to directory groups on restricted artifacts", () => {
     return artifactSchema.parse(published.body.artifact);
   }
 
-  async function listedNames(actor: Actor, scope?: "shared_with_me"): Promise<string[]> {
+  async function listedNames(actor: Actor, scope?: "mine" | "shared_with_me"): Promise<string[]> {
     const query = scope === undefined ? "" : `?scope=${scope}`;
     const response = await fetch(`${server.baseUrl}/api/v1/artifacts${query}`, {headers: headersFor(actor)});
     expect(response.status).toBe(200);

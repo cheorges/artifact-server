@@ -58,7 +58,14 @@ everyone but its owner and the people granted by address.
 ### Fail closed
 
 Any directory error, timeout, or unexpected answer counts as "member of no
-group" for a read and refuses a change. It is never remembered.
+group" for a read and refuses a change. It is never remembered as a
+membership. A caller whose lookup failed is treated as a member of no group
+for 30 seconds before the directory is asked again, and requests that arrive
+together share one lookup, so a slow or refusing directory is not asked on
+every request and does not slow everyone down. The reason of every failure,
+an HTTP status at most, goes to the application log. Listing one's own
+artifacts, and an administrator's listings other than "Shared with me", never
+ask the directory.
 
 ### Groups share the cap
 
@@ -79,6 +86,16 @@ mail address. Members are never searched and member lists are never
 returned (0033). Service principals cannot search. Groups whose membership
 the directory hides are not offered. Group names are visible to every member
 through this search; that was accepted for this installation.
+
+### No rate limit on the search
+
+The search needs a signed-in member and at least two characters, and the
+browser asks only after typing pauses. There is no limit per person beyond
+that. A member or an agent with a member's key who sends very many searches
+can make the directory throttle the application; group access then stays
+closed, as for any directory failure, until the directory answers again. That
+was accepted for an installation of signed-in colleagues; a per-person limit
+is the answer if it happens.
 
 ### Node runtime only
 
