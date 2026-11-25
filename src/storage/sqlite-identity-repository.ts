@@ -26,6 +26,7 @@ import type {
   BindExternalIdentityRecord,
   BootstrapManagedApiKeyRepository,
   CreateApplicationSessionRecord,
+  PrincipalDisplayName,
 } from "../core/identity-ports.js";
 
 const membershipRoleSchema = z.enum([
@@ -102,6 +103,10 @@ const loginAttemptRowSchema = z.object({
 });
 const presenceRowSchema = z.object({present: z.union([z.literal(0), z.literal(1)])});
 const countRowSchema = z.object({count: z.number().int().nonnegative()});
+const principalNameRowSchema = z.object({
+  displayName: z.string(),
+  principalId: z.string(),
+});
 
 /** SQLite persistence for installation membership, sessions, and API keys. */
 export class SqliteIdentityRepository implements BootstrapManagedApiKeyRepository {
@@ -185,6 +190,35 @@ export class SqliteIdentityRepository implements BootstrapManagedApiKeyRepositor
     memberId: string,
   ): Promise<InstallationMember | null> {
     return this.#findMember(installationId, memberId);
+  }
+
+  async findPrincipalDisplayNames(
+    installationId: string,
+    principalIds: readonly string[],
+  ): Promise<readonly PrincipalDisplayName[]> {
+    const ids = [...new Set(principalIds)];
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(", ");
+    // Members first, then service keys oldest to newest, so the newest key's
+    // name wins for a rotated service principal.
+    const rows = this.#database.prepare(`
+      SELECT principalId, displayName FROM (
+        SELECT id AS principalId, display_name AS displayName, 0 AS source, created_at AS createdAt
+        FROM installation_members
+        WHERE installation_id = ? AND id IN (${placeholders})
+        UNION ALL
+        SELECT principal_id, name, 1, created_at
+        FROM managed_api_keys
+        WHERE installation_id = ? AND principal_kind = 'service' AND principal_id IN (${placeholders})
+      )
+      ORDER BY source ASC, createdAt ASC
+    `).all(installationId, ...ids, installationId, ...ids);
+    const names = new Map<string, string>();
+    for (const row of rows) {
+      const parsed = principalNameRowSchema.parse(row);
+      names.set(parsed.principalId, parsed.displayName);
+    }
+    return [...names].map(([principalId, displayName]) => ({displayName, principalId}));
   }
 
   #findMember(

@@ -46,6 +46,8 @@ import {
   type ArtifactDetails,
   type ArtifactVersionDetails,
   ArtifactManagementService,
+  type NamedArtifactActionPage,
+  type NamedArtifactPage,
 } from "../application/artifact-management.js";
 import {
   type MakePublicLinkPrivateResult,
@@ -98,9 +100,7 @@ import {
   agentEvidenceKinds,
   agentProtocolVersion,
   commentClearScopes,
-  type ArtifactActionPage,
   type ArtifactDeletion,
-  type ArtifactPage,
   type ArtifactState,
   type ArtifactVersion,
   commentThreadStates,
@@ -381,6 +381,7 @@ const pageQuerySchema = z.object({
 });
 const artifactPageQuerySchema = pageQuerySchema.extend({
   comments: z.enum(["all", "with", "without"]).default("all"),
+  scope: z.enum(["all", "mine"]).default("all"),
   sort: z.enum(["comments", "newest"]).default("newest"),
   tags: z.array(z.string().max(200)).max(20).default([]),
 });
@@ -1636,6 +1637,7 @@ export function createHttpApp(
           limit: query.limit,
           principal: context.get("principal"),
           projectId: requestedProjectId(context),
+          scope: query.scope,
           search: query.search ?? null,
           sort: query.sort,
           tags: query.tags,
@@ -3013,15 +3015,21 @@ function artifactDetailsResponse(
         requestUrl,
       ).toString(),
     },
+    ownerDisplayName: details.ownerDisplayName,
   };
 }
 
 function artifactPageResponse(
   requestUrl: URL,
-  page: ArtifactPage,
+  page: NamedArtifactPage,
 ) {
   return {
-    artifacts: page.items.map(({commentCount, versionCount, ...artifact}) => ({
+    artifacts: page.items.map(({
+      commentCount,
+      ownerDisplayName,
+      versionCount,
+      ...artifact
+    }) => ({
       artifact,
       commentCount,
       links: {
@@ -3031,6 +3039,7 @@ function artifactPageResponse(
           requestUrl,
         ).toString(),
       },
+      ownerDisplayName,
       versionCount,
     })),
     nextCursor: encodePageCursor(page.nextCursor),
@@ -3300,7 +3309,7 @@ function updateCommentThreadCommand(
   return command;
 }
 
-function artifactActionPageResponse(page: ArtifactActionPage) {
+function artifactActionPageResponse(page: NamedArtifactActionPage) {
   return {
     actions: page.items,
     nextCursor: encodePageCursor(page.nextCursor),

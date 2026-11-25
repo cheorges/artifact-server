@@ -320,7 +320,7 @@ Start with a small, explicit tool surface:
 | Tool | Purpose |
 | --- | --- |
 | `artifact_capabilities` | Report the upload workflow, deployment mode, sharing settings, and current limits. |
-| `artifact_list` | Find artifacts the current principal may access. |
+| `artifact_list` | Find artifacts the current principal may access, each with its owner's name; scope `mine` keeps only the caller's own. |
 | `artifact_get` | Read artifact metadata, the current immutable version, its complete manifest, and its exact full-screen Review link. |
 | `artifact_open` | Return the exact full-screen Review link and raw content link for the selected artifact and exact version when requested. The client opens them on the user's computer and prefers Review for human handoff. |
 | `artifact_create_upload` | Create an expiring upload handle, a direct-upload plan, and an upload grant for its file uploads. |

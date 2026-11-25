@@ -82,6 +82,7 @@ type ReviewTheme = "dawn" | "moon";
 type InspectorTab = "activity" | "comments" | "compare" | "details" | "files" | "versions";
 type ArtifactListLoadResult = "failed" | "loaded" | "skipped";
 type CatalogCommentFilter = "all" | "with" | "without";
+type CatalogOwnerFilter = "all" | "mine";
 type CatalogRefreshState = "complete" | "idle" | "loading";
 type CatalogSort = "comments" | "newest";
 const catalogDefaultWidth = 336;
@@ -152,24 +153,31 @@ function CatalogFilters({
   commentFilter,
   knownTags,
   onCommentFilterChange,
+  onOwnerFilterChange,
   onTagFiltersChange,
+  ownerFilter,
   tagFilters,
 }: {
   readonly commentFilter: CatalogCommentFilter;
   readonly knownTags: readonly string[];
   readonly onCommentFilterChange: (filter: CatalogCommentFilter) => void;
+  readonly onOwnerFilterChange: (filter: CatalogOwnerFilter) => void;
   readonly onTagFiltersChange: (tags: readonly string[]) => void;
+  readonly ownerFilter: CatalogOwnerFilter;
   readonly tagFilters: readonly string[];
 }) {
-  const activeFilterCount = Number(commentFilter !== "all") + tagFilters.length;
+  const activeFilterCount = Number(ownerFilter !== "all") +
+    Number(commentFilter !== "all") + tagFilters.length;
   let triggerLabel = "All artifacts";
-  if (commentFilter === "all" && tagFilters.length === 1) {
+  if (ownerFilter === "mine" && activeFilterCount === 1) {
+    triggerLabel = "Mine";
+  } else if (commentFilter === "all" && ownerFilter === "all" && tagFilters.length === 1) {
     triggerLabel = tagFilters[0] ?? "1 tag";
-  } else if (commentFilter === "all" && tagFilters.length > 1) {
+  } else if (commentFilter === "all" && ownerFilter === "all" && tagFilters.length > 1) {
     triggerLabel = `${tagFilters.length} tags`;
-  } else if (commentFilter === "with" && tagFilters.length === 0) {
+  } else if (commentFilter === "with" && activeFilterCount === 1) {
     triggerLabel = "With comments";
-  } else if (commentFilter === "without" && tagFilters.length === 0) {
+  } else if (commentFilter === "without" && activeFilterCount === 1) {
     triggerLabel = "No comments";
   } else if (activeFilterCount > 0) {
     triggerLabel = `${activeFilterCount} filters`;
@@ -214,6 +222,7 @@ function CatalogFilters({
                 <button
                   className="as-catalog-filter-popover__clear"
                   onClick={() => {
+                    onOwnerFilterChange("all");
                     onCommentFilterChange("all");
                     onTagFiltersChange([]);
                   }}
@@ -223,6 +232,27 @@ function CatalogFilters({
                 </button>
               </div>
             )}
+            <fieldset>
+              <legend>Owner</legend>
+              {([
+                ["all", "Everyone"],
+                ["mine", "Mine"],
+              ] as const).map(([value, label]) => (
+                <label className="as-catalog-filter-option" data-selected={ownerFilter === value} key={value}>
+                  <input
+                    checked={ownerFilter === value}
+                    name="catalog-owner-filter"
+                    onChange={() => onOwnerFilterChange(value)}
+                    type="radio"
+                    value={value}
+                  />
+                  <span>{label}</span>
+                  {ownerFilter === value ? (
+                    <HugeiconsIcon aria-hidden="true" icon={Tick02Icon} strokeWidth={2} />
+                  ) : null}
+                </label>
+              ))}
+            </fieldset>
             <fieldset>
               <legend>Comments</legend>
               {([
@@ -536,6 +566,7 @@ function ArtifactReview({
   const [query, setQuery] = useState("");
   const searchQuery = useDeferredValue(query.trim());
   const [catalogCommentFilter, setCatalogCommentFilter] = useState<CatalogCommentFilter>("all");
+  const [catalogOwnerFilter, setCatalogOwnerFilter] = useState<CatalogOwnerFilter>("all");
   const [catalogTagFilters, setCatalogTagFilters] = useState<readonly string[]>([]);
   const [catalogKnownTags, setCatalogKnownTags] = useState<readonly string[]>([]);
   const [catalogSort, setCatalogSort] = useState<CatalogSort>("newest");
@@ -680,6 +711,7 @@ function ArtifactReview({
       details === null
       || searchQuery !== ""
       || catalogCommentFilter !== "all"
+      || catalogOwnerFilter !== "all"
       || catalogTagFilters.length > 0
       || items.some(({artifact}) => artifact.id === details.artifact.id)
     ) return items;
@@ -687,10 +719,12 @@ function ArtifactReview({
       artifact: details.artifact,
       commentCount: comments.threads.length,
       links: details.links,
+      ownerDisplayName: details.ownerDisplayName,
       versionCount: versions.length,
     }, ...items];
   }, [
     catalogCommentFilter,
+    catalogOwnerFilter,
     catalogTagFilters.length,
     comments.threads.length,
     details,
@@ -713,6 +747,7 @@ function ArtifactReview({
     try {
       const page = await api.artifacts(projectId, cursor, catalogTagFilters, searchQuery, {
         comments: catalogCommentFilter,
+        scope: catalogOwnerFilter,
         sort: catalogSort,
       });
       if (requestGeneration !== catalogRequestGenerationRef.current) return "skipped";
@@ -743,7 +778,7 @@ function ArtifactReview({
         setListLoading(false);
       }
     }
-  }, [catalogCommentFilter, catalogSort, catalogTagFilters, projectId, searchQuery]);
+  }, [catalogCommentFilter, catalogOwnerFilter, catalogSort, catalogTagFilters, projectId, searchQuery]);
 
   const refreshArtifacts = useCallback(async (): Promise<void> => {
     if (listLoading) return;
@@ -1484,7 +1519,9 @@ function ArtifactReview({
                 commentFilter={catalogCommentFilter}
                 knownTags={catalogKnownTags}
                 onCommentFilterChange={setCatalogCommentFilter}
+                onOwnerFilterChange={setCatalogOwnerFilter}
                 onTagFiltersChange={setCatalogTagFilters}
+                ownerFilter={catalogOwnerFilter}
                 tagFilters={catalogTagFilters}
               />
               <label>
@@ -1515,18 +1552,20 @@ function ArtifactReview({
           {!listLoading && listError === null && catalogItems.length === 0 ? (
             <InlineState
               description={
-                query !== "" || catalogCommentFilter !== "all" || catalogTagFilters.length > 0
+                query !== "" || catalogCommentFilter !== "all" || catalogOwnerFilter !== "all"
+                  || catalogTagFilters.length > 0
                   ? "Try clearing a filter or using a wider search."
                   : "Publish from the CLI to populate this project."
               }
               title={
-                query !== "" || catalogCommentFilter !== "all" || catalogTagFilters.length > 0
+                query !== "" || catalogCommentFilter !== "all" || catalogOwnerFilter !== "all"
+                  || catalogTagFilters.length > 0
                   ? "No matching artifacts"
                   : "No artifacts yet"
               }
             />
           ) : null}
-          {catalogItems.map(({artifact, commentCount, versionCount}) => {
+          {catalogItems.map(({artifact, commentCount, ownerDisplayName, versionCount}) => {
             const displayedCommentCount = artifact.id === selectedArtifactId && !comments.loading
               ? comments.threads.length
               : commentCount;
@@ -1548,6 +1587,12 @@ function ArtifactReview({
                     <time dateTime={artifact.createdAt}>{formatTimestamp(artifact.createdAt)}</time>
                     <span aria-hidden="true">·</span>
                     <span>{versionCount} version{versionCount === 1 ? "" : "s"}</span>
+                    {ownerDisplayName === null ? null : (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="as-artifact-card__owner">by {ownerDisplayName}</span>
+                      </>
+                    )}
                   </span>
                   <span className="as-artifact-card__counts">
                     <span>
@@ -2137,8 +2182,17 @@ function DetailsInspector({
     : sourceDriftDescription(details.sourceBinding.status, "captured");
   return (
     <div className="as-inspector-stack">
-      <InspectorSection count={5} title="Artifact">
+      <InspectorSection count={6} title="Artifact">
         <InspectorRow label="name" title={details.artifact.name} value={details.artifact.name} />
+        <InspectorRow
+          label="owner"
+          title={details.artifact.ownerPrincipalId ?? "Unknown owner"}
+          value={details.ownerDisplayName ?? (
+            details.artifact.ownerPrincipalId === null
+              ? "Unknown"
+              : compactId(details.artifact.ownerPrincipalId)
+          )}
+        />
         <InspectorRow
           label="access"
           value={<AccessPill access={details.artifact.accessSetting} />}
@@ -2431,7 +2485,9 @@ function ActivityInspector({
             <li key={action.id}>
               <strong>{actionLabel(action.action)}</strong>
               <time dateTime={action.createdAt}>{formatTimestamp(action.createdAt)}</time>
-              <code title={action.principalId}>{compactId(action.principalId)}</code>
+              {action.actorDisplayName === null
+                ? <code title={action.principalId}>{compactId(action.principalId)}</code>
+                : <span title={action.principalId}>{action.actorDisplayName}</span>}
             </li>
           ))}
         </ol>

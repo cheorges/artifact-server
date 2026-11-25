@@ -1723,6 +1723,8 @@ export class PostgresArtifactRepository implements
       queryParameters.push(...restrictedScopeParameters(command.restrictedScope));
       const restrictedAllPlaceholder = `$${queryParameters.length - 1}`;
       const restrictedOwnerPlaceholder = `$${queryParameters.length}`;
+      queryParameters.push(command.ownerPrincipalId);
+      const ownerFilterPlaceholder = `$${queryParameters.length}`;
       const rows = yield* sql.unsafe<object>(
         `SELECT * FROM (
           SELECT id, project_id AS "projectId", name,
@@ -1747,6 +1749,8 @@ export class PostgresArtifactRepository implements
             AND deleted_at IS NULL
             AND (NOT restricted OR ${restrictedAllPlaceholder}::int = 1
               OR owner_principal_id = ${restrictedOwnerPlaceholder}::text)
+            AND (${ownerFilterPlaceholder}::text IS NULL
+              OR owner_principal_id = ${ownerFilterPlaceholder}::text)
             AND ($3::text IS NULL
               OR strpos(search_name, $3) > 0
               OR EXISTS (

@@ -36,6 +36,12 @@ export interface CreateApplicationSessionRecord {
   readonly tokenDigest: string;
 }
 
+/** The name shown for one member or API-key principal. */
+export interface PrincipalDisplayName {
+  readonly displayName: string;
+  readonly principalId: string;
+}
+
 /** Persistent identity operations required by the Node application composition. */
 export interface IdentityRepository {
   admitMember(command: AdmitMemberRecord): Promise<InstallationMember>;
@@ -88,6 +94,16 @@ export interface IdentityRepository {
     provider: string,
     subject: string,
   ): Promise<InstallationMember | null>;
+  /**
+   * Find the shown name of each listed principal: a member's display name,
+   * deactivated members included, or a service key's name, the newest key's
+   * when it was rotated. Unknown ids are left out; email addresses never are
+   * returned.
+   */
+  findPrincipalDisplayNames(
+    installationId: string,
+    principalIds: readonly string[],
+  ): Promise<readonly PrincipalDisplayName[]>;
   hasMembers(installationId: string): Promise<boolean>;
   listApiKeys(installationId: string): Promise<readonly ManagedApiKey[]>;
   listMembers(installationId: string): Promise<readonly InstallationMember[]>;

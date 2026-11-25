@@ -94,6 +94,7 @@ const artifactPageSchema = z.object({
 const actionPageSchema = z.object({
   actions: z.array(z.object({
     action: z.string(),
+    actorDisplayName: z.string().nullable(),
     artifactId: z.string().min(1),
     authorizedByPrincipalId: z.string().nullable(),
     createdAt: z.iso.datetime(),

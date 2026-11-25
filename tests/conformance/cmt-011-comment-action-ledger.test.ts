@@ -29,6 +29,7 @@ const agentPrincipalId = "service:key_publisher";
 
 const actionRecordSchema = z.object({
   action: z.string(),
+  actorDisplayName: z.string().nullable(),
   artifactId: z.string(),
   authorizedByPrincipalId: z.string().nullable(),
   createdAt: z.iso.datetime(),

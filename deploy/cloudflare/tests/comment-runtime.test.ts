@@ -376,6 +376,87 @@ describe("Cloudflare D1 comments", () => {
     expect(afterRestart.items[0]?.state).toBe("resolved");
   }, 120_000);
 
+  it("AUTH-035: names owners from D1 members and service keys and lists only the caller's own artifacts with scope=mine", async () => {
+    const namesDirectory = await mkdtemp(
+      join(tmpdir(), "artifact-server-cloudflare-names-"),
+    );
+    let namesWorker = await startWorker(namesDirectory);
+    try {
+      const byAda = await publishArtifact(namesWorker, "names-ada-publish-0001");
+      const byBot = await publishArtifact(namesWorker, "names-bot-publish-0001");
+      const own = await publishArtifact(namesWorker, "names-own-publish-0001");
+      await namesWorker.stop();
+
+      // Hand two artifacts to a member and a rotated service key that only
+      // exist in the D1 identity tables.
+      const database = new DatabaseSync(await findD1DatabaseFile(namesDirectory));
+      try {
+        const {installationId} = z.object({installationId: z.string()}).parse(
+          database.prepare(
+            "SELECT installation_id AS installationId FROM projects LIMIT 1",
+          ).get(),
+        );
+        database.prepare(`
+          INSERT INTO installation_members
+            (id, installation_id, email, display_name, role, status, created_at, updated_at)
+          VALUES ('member_ada', ?, 'ada@example.test', 'Ada Lovelace', 'member', 'inactive', ?, ?)
+        `).run(installationId, "2026-11-01T00:00:00.000Z", "2026-11-02T00:00:00.000Z");
+        const insertKey = database.prepare(`
+          INSERT INTO managed_api_keys
+            (id, installation_id, name, prefix, secret_digest, principal_id, principal_kind,
+             capabilities_json, authorized_by_principal_id, created_at, expires_at)
+          VALUES (?, ?, ?, ?, 'digest', 'service_bot', 'service', '[]', 'member_ada', ?, ?)
+        `);
+        insertKey.run("key_old", installationId, "Old bot name", "prefix_old",
+          "2026-11-01T00:00:00.000Z", "2099-01-01T00:00:00.000Z");
+        insertKey.run("key_new", installationId, "Release bot", "prefix_new",
+          "2026-11-03T00:00:00.000Z", "2099-01-01T00:00:00.000Z");
+        const handOver = database.prepare(
+          "UPDATE artifacts SET owner_principal_id = ? WHERE id = ?",
+        );
+        handOver.run("member_ada", byAda.artifact.id);
+        handOver.run("service_bot", byBot.artifact.id);
+      } finally {
+        database.close();
+      }
+
+      namesWorker = await startWorker(namesDirectory);
+      const listSchema = z.object({
+        artifacts: z.array(z.object({
+          artifact: z.object({id: z.string()}),
+          ownerDisplayName: z.string().nullable(),
+        })),
+      });
+      const listed = listSchema.parse(await (await authenticatedFetch(
+        namesWorker,
+        `${origin}/api/v1/artifacts`,
+      )).json());
+      expect(Object.fromEntries(listed.artifacts.map(({artifact, ownerDisplayName}) => [
+        artifact.id,
+        ownerDisplayName,
+      ]))).toEqual({
+        [byAda.artifact.id]: "Ada Lovelace",
+        [byBot.artifact.id]: "Release bot",
+        [own.artifact.id]: null,
+      });
+      const details = z.object({ownerDisplayName: z.string().nullable()}).parse(
+        await (await authenticatedFetch(
+          namesWorker,
+          `${origin}/api/v1/artifacts/${byAda.artifact.id}`,
+        )).json(),
+      );
+      expect(details.ownerDisplayName).toBe("Ada Lovelace");
+      const mine = listSchema.parse(await (await authenticatedFetch(
+        namesWorker,
+        `${origin}/api/v1/artifacts?scope=mine`,
+      )).json());
+      expect(mine.artifacts.map(({artifact}) => artifact.id)).toEqual([own.artifact.id]);
+    } finally {
+      await namesWorker.stop();
+      await rm(namesDirectory, {force: true, recursive: true});
+    }
+  }, 120_000);
+
   it("adds the staged upload grant column to a revision 9 database", async () => {
     const grantDirectory = await mkdtemp(
       join(tmpdir(), "artifact-server-cloudflare-grant-"),

@@ -864,11 +864,12 @@ export function createArtifactMcpServer(
     {
       title: "List artifacts",
       description:
-        "Find artifacts visible to the caller. Use tag for exact normalized-tag filtering and nextCursor to continue a large result set.",
+        "Find artifacts visible to the caller. Use scope mine for only the caller's own artifacts, tag for exact normalized-tag filtering, and nextCursor to continue a large result set. Each artifact names its owner.",
       inputSchema: z.object({
         cursor: z.string().max(1_024).nullable().default(null),
         limit: z.number().int().min(1).max(maximumListedArtifacts).default(50),
         projectId: optionalProjectIdSchema,
+        scope: z.enum(["all", "mine"]).default("all"),
         tag: tagSchema.nullable().default(null),
       }).strict(),
       outputSchema: z.object({
@@ -879,6 +880,7 @@ export function createArtifactMcpServer(
           currentVersionId: z.string(),
           id: z.string(),
           name: z.string(),
+          ownerDisplayName: z.string().nullable(),
           projectId: z.string(),
           tags: z.array(z.string()),
           versionCount: z.number().int().positive(),
@@ -887,7 +889,7 @@ export function createArtifactMcpServer(
       }),
       annotations: readOnlyAnnotations,
     },
-    async ({cursor, limit, projectId, tag}) => toolResult(async () => {
+    async ({cursor, limit, projectId, scope, tag}) => toolResult(async () => {
       const page = await runMcpApplicationEffect(
         dependencies,
         ArtifactManagementService.use((management) =>
@@ -896,6 +898,7 @@ export function createArtifactMcpServer(
             limit,
             principal: identity.principal,
             projectId,
+            scope,
             search: null,
             tags: tag === null ? [] : [tag],
           })
@@ -909,6 +912,7 @@ export function createArtifactMcpServer(
           currentVersionId: artifact.currentVersionId,
           id: artifact.id,
           name: artifact.name,
+          ownerDisplayName: artifact.ownerDisplayName,
           projectId: artifact.projectId,
           tags: [...artifact.tags],
           versionCount: artifact.versionCount,
@@ -939,6 +943,7 @@ export function createArtifactMcpServer(
           version: versionRecordSchema,
         }).strict(),
         links: z.object({artifact: z.url()}).strict(),
+        ownerDisplayName: z.string().nullable(),
       }).strict(),
       annotations: readOnlyAnnotations,
     },
@@ -964,6 +969,7 @@ export function createArtifactMcpServer(
         links: {
           artifact: artifactBrowserUrl(applicationUrl, details.artifact.id),
         },
+        ownerDisplayName: details.ownerDisplayName,
       };
     }),
   );

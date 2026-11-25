@@ -13,6 +13,7 @@ import type {
   BindExternalIdentityRecord,
   BootstrapManagedApiKeyRepository,
   CreateApplicationSessionRecord,
+  PrincipalDisplayName,
 } from "../core/identity-ports.js";
 import {
   type ApplicationSession,
@@ -51,6 +52,10 @@ const principalCapabilitySchema = z.enum([
   principalCapabilities.readArtifacts,
   principalCapabilities.writeComments,
 ]);
+const principalNameRowSchema = z.object({
+  displayName: z.string(),
+  principalId: z.string(),
+});
 const memberRowSchema = z.object({
   createdAt: z.string(),
   displayName: z.string(),
@@ -171,6 +176,38 @@ export class PostgresIdentityRepository implements BootstrapManagedApiKeyReposit
   ): Promise<InstallationMember | null> {
     this.#assertInstallationScope(installationId);
     return this.#database.run(this.#findMember(installationId, memberId, false));
+  }
+
+  async findPrincipalDisplayNames(
+    installationId: string,
+    principalIds: readonly string[],
+  ): Promise<readonly PrincipalDisplayName[]> {
+    this.#assertInstallationScope(installationId);
+    const ids = [...new Set(principalIds)];
+    if (ids.length === 0) return [];
+    return this.#database.run(Effect.gen(function*() {
+      const sql = yield* SqlClient;
+      // Members first, then service keys oldest to newest, so the newest key's
+      // name wins for a rotated service principal.
+      const rows = yield* sql.unsafe<object>(
+        `SELECT "principalId", "displayName" FROM (
+           SELECT id AS "principalId", display_name AS "displayName", 0 AS source, created_at
+           FROM installation_members
+           WHERE installation_id = $1 AND id = ANY($2::text[])
+           UNION ALL
+           SELECT principal_id, name, 1, created_at
+           FROM managed_api_keys
+           WHERE installation_id = $1 AND principal_kind = 'service' AND principal_id = ANY($2::text[])
+         ) AS names
+         ORDER BY source ASC, created_at ASC`,
+        [installationId, ids],
+      );
+      const names = new Map<string, string>();
+      for (const row of z.array(principalNameRowSchema).parse(rows)) {
+        names.set(row.principalId, row.displayName);
+      }
+      return [...names].map(([principalId, displayName]) => ({displayName, principalId}));
+    }));
   }
 
   async findActiveMemberByEmail(

@@ -387,6 +387,7 @@ export class ArtifactRepositoryFailure extends Schema.TaggedError<ArtifactReposi
       "findIdempotentCommentThread",
       "findIdempotentPublication",
       "findPreviewLease",
+      "findPrincipalDisplayNames",
       "findStagedUpload",
       "findStagedUploadGrant",
       "findVersionContent",

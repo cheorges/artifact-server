@@ -205,6 +205,8 @@ export interface ListArtifacts {
   readonly comments: "all" | "with" | "without";
   readonly cursor: PageCursor | null;
   readonly limit: number;
+  /** Keep only artifacts this principal owns, or every visible one when null. */
+  readonly ownerPrincipalId: string | null;
   readonly projectId: string;
   /** Which restricted artifacts the reader may see; others are filtered out. */
   readonly restrictedScope: RestrictedArtifactScope;

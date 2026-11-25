@@ -276,6 +276,8 @@ export interface ArtifactPage {
       readonly artifact: string;
       readonly management: string;
     };
+    /** The owner's shown name, or null when the owner is unknown. */
+    readonly ownerDisplayName: string | null;
     readonly versionCount: number;
   }[];
   readonly nextCursor: string | null;
@@ -290,6 +292,8 @@ export interface ArtifactDetails {
     readonly live?: string | undefined;
     readonly management: string;
   };
+  /** The owner's shown name, or null when the owner is unknown. */
+  readonly ownerDisplayName: string | null;
   /** Present only on a local deployment that linked this artifact to a file. */
   readonly sourceBinding?: SourceBinding | undefined;
 }
@@ -310,6 +314,8 @@ export interface ArtifactAction {
     | "publish"
     | "relink"
     | "restore";
+  /** The actor's shown name, or null when the actor is unknown. */
+  readonly actorDisplayName: string | null;
   readonly artifactId: string;
   readonly authorizedByPrincipalId: string | null;
   readonly createdAt: string;
@@ -362,6 +368,7 @@ const artifactPageSchema: z.ZodType<ArtifactPage> = z.object({
     artifact: artifactSchema,
     commentCount: z.number().int().nonnegative(),
     links: z.object({ artifact: z.url(), management: z.url() }),
+    ownerDisplayName: z.string().nullable(),
     versionCount: z.number().int().positive(),
   })),
   nextCursor: z.string().nullable(),
@@ -375,6 +382,7 @@ const artifactDetailsSchema: z.ZodType<ArtifactDetails> = z.object({
     live: z.url().optional(),
     management: z.url(),
   }),
+  ownerDisplayName: z.string().nullable(),
   sourceBinding: sourceBindingSchema.optional(),
 });
 
@@ -410,6 +418,7 @@ const actionSchema: z.ZodType<ArtifactAction> = z.object({
     "relink",
     "restore",
   ]),
+  actorDisplayName: z.string().nullable(),
   artifactId: z.string(),
   authorizedByPrincipalId: z.string().nullable(),
   createdAt: z.string(),
@@ -956,11 +965,13 @@ export const api = {
     search = "",
     options: {
       readonly comments?: "all" | "with" | "without";
+      readonly scope?: "all" | "mine";
       readonly sort?: "comments" | "newest";
     } = {},
   ) => {
     const query = new URLSearchParams({ limit: "25", projectId });
     query.set("comments", options.comments ?? "all");
+    query.set("scope", options.scope ?? "all");
     query.set("sort", options.sort ?? "newest");
     if (cursor !== null) query.set("cursor", cursor);
     for (const tag of tags) query.append("tag", tag);

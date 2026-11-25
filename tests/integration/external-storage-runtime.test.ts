@@ -2209,6 +2209,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
           comments: "all",
           cursor: null,
           limit: 10,
+          ownerPrincipalId: null,
           projectId,
           restrictedScope,
           sort: "newest",
@@ -2222,6 +2223,105 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       expect(await listedFor({kind: "all"})).toEqual(["Kept page", "Shared page"]);
       expect((await repository.findArtifact(projectId, shared.body.artifact.id))
         ?.accessSetting).toBe("public_link");
+    } finally {
+      await database.close();
+      await server.stop();
+    }
+  });
+
+  test("AUTH-035 foundation: Postgres names members and rotated service keys and lists only one owner's artifacts", async () => {
+    expect.hasAssertions();
+    const ownerIdentity = {
+      apiToken: managedTestKey("postgres-names"),
+      installationId: `postgres-names-${randomUUID()}`,
+    };
+    const server = await startInProcessExternalStorageServer(
+      environment,
+      ownerIdentity,
+    );
+    const published = await publishNew(server.baseUrl, ownerIdentity.apiToken, {
+      content: "<p>own</p>",
+      idempotencyKey: `names-own-${randomUUID()}`,
+      name: "Own page",
+    });
+    const owner = managedTestPrincipal(ownerIdentity.apiToken).principalId;
+    const projectId = published.body.artifact.projectId;
+    const database = await PostgresDatabase.open({
+      maxConnections: 2,
+      url: Redacted.make(environment.databaseUrl),
+    }, "validate");
+    try {
+      const identities = new PostgresIdentityRepository(
+        database,
+        ownerIdentity.installationId,
+      );
+      await identities.admitMember({
+        createdAt: "2026-11-01T00:00:00.000Z",
+        displayName: "Ada Lovelace",
+        email: "ada@example.test",
+        id: "member_ada",
+        installationId: ownerIdentity.installationId,
+        role: "member",
+      });
+      await identities.deactivateMember(
+        ownerIdentity.installationId,
+        "member_ada",
+        "2026-11-02T00:00:00.000Z",
+      );
+      const serviceKey = (id: string, name: string, createdAt: string) => ({
+        authorizedByPrincipalId: "member_ada",
+        capabilities: [],
+        createdAt,
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        id,
+        installationId: ownerIdentity.installationId,
+        name,
+        prefix: `prefix_${id}`,
+        principalId: "service_bot",
+        principalKind: "service",
+        revokedAt: null,
+        rotatedFromId: null,
+        secretDigest: `digest_${id}`,
+      } as const);
+      await identities.createApiKey(
+        serviceKey("key_old", "Old bot name", "2026-11-01T00:00:00.000Z"),
+      );
+      await identities.createApiKey(
+        serviceKey("key_new", "Release bot", "2026-11-03T00:00:00.000Z"),
+      );
+      const names = await identities.findPrincipalDisplayNames(
+        ownerIdentity.installationId,
+        ["member_ada", "service_bot", "member_unknown", "member_ada"],
+      );
+      expect(names.toSorted((left, right) =>
+        left.principalId.localeCompare(right.principalId)
+      )).toEqual([
+        {displayName: "Ada Lovelace", principalId: "member_ada"},
+        {displayName: "Release bot", principalId: "service_bot"},
+      ]);
+      expect(await identities.findPrincipalDisplayNames(
+        ownerIdentity.installationId,
+        [],
+      )).toEqual([]);
+
+      const repository = await PostgresArtifactRepository.open(
+        database,
+        ownerIdentity.installationId,
+      );
+      const listedFor = async (ownerPrincipalId: string | null) =>
+        (await repository.listArtifacts({
+          comments: "all",
+          cursor: null,
+          limit: 10,
+          ownerPrincipalId,
+          projectId,
+          restrictedScope: {kind: "all"},
+          sort: "newest",
+          tags: [],
+        })).items.map(({id}) => id);
+      expect(await listedFor(owner)).toEqual([published.body.artifact.id]);
+      expect(await listedFor("member_ada")).toEqual([]);
+      expect(await listedFor(null)).toEqual([published.body.artifact.id]);
     } finally {
       await database.close();
       await server.stop();

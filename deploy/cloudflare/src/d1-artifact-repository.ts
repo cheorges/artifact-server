@@ -2510,6 +2510,7 @@ export function createD1ArtifactRepository(
           FROM artifacts
           WHERE project_id = ? AND deleted_at IS NULL
             AND (restricted = 0 OR ? = 1 OR owner_principal_id = ?)
+            AND (? IS NULL OR owner_principal_id = ?)
             AND (? IS NULL
               OR instr(search_name, ?) > 0
               OR EXISTS (
@@ -2528,6 +2529,8 @@ export function createD1ArtifactRepository(
       `).bind(
         command.projectId,
         ...restrictedScopeParameters(command.restrictedScope),
+        command.ownerPrincipalId,
+        command.ownerPrincipalId,
         command.search ?? null,
         command.search ?? null,
         command.search ?? null,

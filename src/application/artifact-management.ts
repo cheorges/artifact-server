@@ -42,7 +42,9 @@ import {
   accessSettings,
   type AccessSetting,
   type ArtifactActionPage,
+  type ArtifactActionRecord,
   type ArtifactDeletion,
+  type ArtifactListItem,
   type ArtifactPage,
   type ArtifactRecord,
   type ArtifactState,
@@ -66,7 +68,36 @@ const maximumPageSize = 100;
 export interface ArtifactDetails {
   readonly artifact: ArtifactRecord;
   readonly current: ArtifactVersion;
+  /** The owner's shown name, or null when the owner is unknown. */
+  readonly ownerDisplayName: string | null;
 }
+
+/** One listed artifact with its owner's shown name. */
+export interface NamedArtifactListItem extends ArtifactListItem {
+  /** The owner's shown name, or null when the owner is unknown. */
+  readonly ownerDisplayName: string | null;
+}
+
+/** One bounded page of listed artifacts with their owners' shown names. */
+export interface NamedArtifactPage {
+  readonly items: readonly NamedArtifactListItem[];
+  readonly nextCursor: PageCursor | null;
+}
+
+/** One recorded action with the shown name of the principal that took it. */
+export interface NamedArtifactAction extends ArtifactActionRecord {
+  /** The actor's shown name, or null when the actor is unknown. */
+  readonly actorDisplayName: string | null;
+}
+
+/** One bounded page of recorded actions with their actors' shown names. */
+export interface NamedArtifactActionPage {
+  readonly items: readonly NamedArtifactAction[];
+  readonly nextCursor: PageCursor | null;
+}
+
+/** Which artifacts a list covers: every visible one, or only the caller's own. */
+export type ArtifactListScope = "all" | "mine";
 
 /** One artifact and one exact saved version selected for a version-level action. */
 export interface ArtifactVersionDetails {
@@ -126,6 +157,8 @@ export interface ListArtifactsCommand {
   readonly limit: number;
   readonly principal: Principal;
   readonly projectId: string | null;
+  /** `mine` keeps only artifacts the caller owns; the default is `all`. */
+  readonly scope?: ArtifactListScope;
   readonly search: string | null;
   readonly sort?: "comments" | "newest";
   readonly tags: readonly string[];
@@ -207,9 +240,19 @@ export interface ArtifactManagementRepository {
   >;
 }
 
+/** Looks up the names shown for artifact owners and actors. */
+export interface PrincipalNameDirectory {
+  /** Map each known principal id to its shown name; unknown ids are absent. */
+  readonly findDisplayNames: (
+    installationId: string,
+    principalIds: readonly string[],
+  ) => Effect.Effect<ReadonlyMap<string, string>, ArtifactRepositoryFailure>;
+}
+
 /** Dependencies used to construct artifact management operations. */
 export interface ArtifactManagementDependencies {
   readonly clock: ApplicationClock;
+  readonly principalNames: PrincipalNameDirectory;
   /** Installation switch that refuses new public links when off. */
   readonly publicLinks: PublicLinkPolicy;
   readonly repository: ArtifactManagementRepository;
@@ -252,10 +295,10 @@ interface ArtifactManagementOperations {
   ) => Effect.Effect<readonly VersionRecord[], ArtifactManagementFailure>;
   readonly listArtifactActions: (
     command: ListArtifactActionsCommand,
-  ) => Effect.Effect<ArtifactActionPage, ArtifactManagementFailure>;
+  ) => Effect.Effect<NamedArtifactActionPage, ArtifactManagementFailure>;
   readonly listArtifacts: (
     command: ListArtifactsCommand,
-  ) => Effect.Effect<ArtifactPage, ArtifactManagementFailure>;
+  ) => Effect.Effect<NamedArtifactPage, ArtifactManagementFailure>;
   readonly restoreVersion: (
     command: RestoreArtifactVersionCommand,
   ) => Effect.Effect<ArtifactState, ArtifactManagementFailure>;
@@ -333,6 +376,17 @@ function makeArtifactManagementService(
     return yield* new ArtifactNotFound({message: "The artifact does not exist."});
   });
 
+  const displayNames = Effect.fn("ArtifactManagementService.displayNames")(
+    function*(principal: Principal, principalIds: readonly (string | null)[]) {
+      const ids = [...new Set(principalIds.filter((id) => id !== null))];
+      if (ids.length === 0) return new Map<string, string>();
+      return yield* dependencies.principalNames.findDisplayNames(
+        principal.installationId,
+        ids,
+      );
+    },
+  );
+
   const requirePageSize = Effect.fn("ArtifactManagementService.requirePageSize")(
     function*(limit: number) {
       if (Number.isInteger(limit) && limit >= 1 && limit <= maximumPageSize) {
@@ -376,7 +430,8 @@ function makeArtifactManagementService(
         artifact.id,
         artifact.currentVersionId,
       );
-      return {artifact, current};
+      const names = yield* displayNames(command.principal, [artifact.ownerPrincipalId]);
+      return {artifact, current, ownerDisplayName: nameOf(names, artifact.ownerPrincipalId)};
     },
   );
 
@@ -460,16 +515,28 @@ function makeArtifactManagementService(
         command.principal,
         command.projectId,
       );
-      return yield* dependencies.repository.listArtifacts({
+      const page = yield* dependencies.repository.listArtifacts({
         comments,
         cursor: command.cursor,
         limit,
+        ownerPrincipalId: command.scope === "mine" ? command.principal.id : null,
         projectId: project.id,
         restrictedScope: restrictedArtifactScope(command.principal),
         search,
         sort,
         tags,
       });
+      const names = yield* displayNames(
+        command.principal,
+        page.items.map((item) => item.ownerPrincipalId),
+      );
+      return {
+        items: page.items.map((item) => ({
+          ...item,
+          ownerDisplayName: nameOf(names, item.ownerPrincipalId),
+        })),
+        nextCursor: page.nextCursor,
+      };
     },
   );
 
@@ -487,12 +554,23 @@ function makeArtifactManagementService(
     );
     yield* requireArtifactVisible(command.principal, artifact);
     yield* authorization.requireArtifactManagement(command.principal);
-    return yield* dependencies.repository.listArtifactActions({
+    const page = yield* dependencies.repository.listArtifactActions({
       artifactId: artifact.id,
       cursor: command.cursor,
       limit,
       projectId: project.id,
     });
+    const names = yield* displayNames(
+      command.principal,
+      page.items.map((action) => action.principalId),
+    );
+    return {
+      items: page.items.map((action) => ({
+        ...action,
+        actorDisplayName: nameOf(names, action.principalId),
+      })),
+      nextCursor: page.nextCursor,
+    };
   });
 
   const restoreVersion = Effect.fn("ArtifactManagementService.restoreVersion")(
@@ -679,4 +757,11 @@ interface ManagementInputDigest {
 
 function managementInputDigest(input: ManagementInputDigest): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
+function nameOf(
+  names: ReadonlyMap<string, string>,
+  principalId: string | null,
+): string | null {
+  return principalId === null ? null : names.get(principalId) ?? null;
 }

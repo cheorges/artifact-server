@@ -47,6 +47,10 @@ const principalCapabilitySchema = z.enum([
   principalCapabilities.readArtifacts,
   principalCapabilities.writeComments,
 ]);
+const principalNameRowSchema = z.object({
+  displayName: z.string(),
+  principalId: z.string(),
+});
 const memberRowSchema = z.object({
   createdAt: z.string(),
   displayName: z.string(),
@@ -440,6 +444,33 @@ export function createD1IdentityRepository(
       `).bind(installationId, provider, subject)
         .first<z.input<typeof memberRowSchema>>();
       return row === null ? null : memberRowSchema.parse(row);
+    },
+
+    findPrincipalDisplayNames: async (installationId, principalIds) => {
+      const ids = [...new Set(principalIds)];
+      if (ids.length === 0) return [];
+      const placeholders = ids.map(() => "?").join(", ");
+      // Members first, then service keys oldest to newest, so the newest key's
+      // name wins for a rotated service principal.
+      const result = await database.prepare(`
+        SELECT principalId, displayName FROM (
+          SELECT id AS principalId, display_name AS displayName, 0 AS source, created_at AS createdAt
+          FROM installation_members
+          WHERE installation_id = ? AND id IN (${placeholders})
+          UNION ALL
+          SELECT principal_id, name, 1, created_at
+          FROM managed_api_keys
+          WHERE installation_id = ? AND principal_kind = 'service' AND principal_id IN (${placeholders})
+        )
+        ORDER BY source ASC, createdAt ASC
+      `).bind(installationId, ...ids, installationId, ...ids)
+        .all<z.input<typeof principalNameRowSchema>>();
+      const names = new Map<string, string>();
+      for (const row of result.results) {
+        const parsed = principalNameRowSchema.parse(row);
+        names.set(parsed.principalId, parsed.displayName);
+      }
+      return [...names].map(([principalId, displayName]) => ({displayName, principalId}));
     },
 
     hasMembers: async (installationId) => {

@@ -1813,6 +1813,20 @@ requirements:
     depends_on: [AUTH-006, AUTH-007]
     evidence: []
 
+  - id: AUTH-035
+    kind: behavior
+    behavior: Artifact listings, artifact details, and artifact activity name the artifact's owner and each action's actor by the member's display name or the service key's name, never by email address, and a list scope of mine keeps only the caller's own artifacts through HTTP, MCP, and the web interface.
+    owner: authorization
+    source: {file: artifact-server-product-spec.html, anchor: sharing}
+    acceptance:
+      behavior: {id: AUTH-035-B, description: "Members and a service key publish; the HTTP list, details, and activity and the MCP list and get answer each owner's and actor's name, and scope mine over HTTP and MCP lists only the caller's own artifacts."}
+      failure: {id: AUTH-035-F, description: "No answer carries an email address, a deactivated owner keeps their name, scope mine combined with a tag or search never lists another member's artifact, and an unknown scope is refused over HTTP and MCP."}
+    deployments: *all
+    status: implementing
+    proof_gap: AUTH-035-B and AUTH-035-F run against the local SQLite server, the browser test proves the catalog, Details, Activity, and the Mine filter in Chromium, and Postgres and D1 runtime tests cover the name lookup, rotated service keys, and the owner filter. No deployment-specific evidence is recorded.
+    depends_on: [AUTH-030]
+    evidence: []
+
   - id: SEC-001
     kind: security
     behavior: Published websites are treated as untrusted arbitrary browser JavaScript.
