@@ -175,7 +175,7 @@ describe("grants to persons on restricted artifacts", () => {
     expect((await readArtifact(dora, draft.id)).name).toBe("Ada's plan");
   });
 
-  test("AUTH-037-F: grantees cannot manage, others cannot see, a changed or deactivated grantee loses access, and grants on other settings change nothing", async () => {
+  test("AUTH-037-F: grantees cannot manage or remove others' comments, others cannot see, a deactivated grantee or one whose recorded email differs loses access, and grants on other settings change nothing", async () => {
     expect.hasAssertions();
     const draft = await publishAs(ada, "Ada's secret", "restricted");
     expect((await grant(ada, draft.id, ["ben@example.test"])).status).toBe(200);
@@ -218,8 +218,20 @@ describe("grants to persons on restricted artifacts", () => {
       projectId: draft.projectId,
     })).rejects.toThrow("HTTP 403");
     const thread = await commentOn(ben, draft.id, draft.currentVersionId);
+
+    // Commenting is shared; removing someone else's review is not.
+    const adasThread = await commentOn(ada, draft.id, draft.currentVersionId);
+    expect((await request(ben, "DELETE", `${draft.id}/comments/${adasThread}`)).status).toBe(403);
+    const cleared = await fetch(
+      `${server.baseUrl}/api/v1/projects/${draft.projectId}/artifacts/${draft.id}/comments/clear`,
+      {body: JSON.stringify({state: "all"}), headers: headersFor(ben, {json: true}), method: "POST"},
+    );
+    expect(cleared.status).toBe(403);
+    expect((await request(ada, "GET", `${draft.id}/comments/${adasThread}`)).status).toBe(200);
+    expect((await request(ben, "DELETE", `${draft.id}/comments/${thread}`)).status).toBe(204);
+
     const agent = await registerAgent(service);
-    const dispatched = await dispatch(ben, agent, [thread]);
+    const dispatched = await dispatch(ben, agent, [adasThread]);
     expect(dispatched.status).toBeGreaterThanOrEqual(400);
     expect(dispatched.status).toBeLessThan(500);
     expect((await readArtifact(ada, draft.id)).accessSetting).toBe("restricted");
@@ -229,8 +241,11 @@ describe("grants to persons on restricted artifacts", () => {
     expect((await grant(ada, open.id, ["carl@example.test"])).status).toBe(200);
     expect(await listedNames(carl, undefined, "shared_with_me")).toStrictEqual([]);
     expect((await readArtifact(service, open.id)).name).toBe("Ada's open page");
+    // A service principal is never granted anything, so nothing is shared with it.
+    expect(await listedNames(service)).toContain("Ada's open page");
+    expect(await listedNames(service, undefined, "shared_with_me")).toStrictEqual([]);
 
-    // The grant follows the member's current email.
+    // The grant follows the email Artifact Server records for the member.
     const database = openDatabase();
     try {
       database.prepare("UPDATE installation_members SET email = 'ben@elsewhere.test' WHERE id = ?").run(ben.id);
@@ -316,6 +331,10 @@ describe("grants to persons on restricted artifacts", () => {
     const readingKey = await issueKey(ada.id, "Ada's reading key", ["artifact:read"]);
     expect((await grant(readingKey, draft.id, ["dora@example.test"])).status).toBe(403);
     expect((await request(readingKey, "GET", `${draft.id}/grants`)).status).toBe(403);
+    // That key still reads the artifact over MCP; only the grant list is withheld.
+    const readByNarrowKey = mcpGetSchema.parse(await callTool(readingKey, "artifact_get", {artifactId: draft.id}));
+    expect(readByNarrowKey.artifact.name).toBe("Ada's limits");
+    expect(readByNarrowKey.grants).toBeNull();
 
     // On an artifact every member sees, other members get 403, not the list.
     const open = await publishAs(ada, "Ada's open limits");
@@ -342,6 +361,19 @@ describe("grants to persons on restricted artifacts", () => {
     expect(openContentAccess(draft.id, ben.id)).toBe(0);
     expect((await request(ben, "GET", draft.id)).status).toBe(missing.status);
     expect(await listedNames(ben, undefined, "shared_with_me")).toStrictEqual([]);
+
+    // Deleting the artifact removes the addresses it was shared with.
+    expect((await grant(ada, draft.id, ["dora@example.test"])).status).toBe(200);
+    expect((await mutate(ada, "DELETE", draft.id, {expectedCurrentVersionId: draft.currentVersionId})).status)
+      .toBe(200);
+    const database = openDatabase();
+    try {
+      expect(z.object({total: z.number()}).parse(database.prepare(
+        "SELECT COUNT(*) AS total FROM artifact_grants WHERE artifact_id = ?",
+      ).get(draft.id)).total).toBe(0);
+    } finally {
+      database.close();
+    }
   });
 
   async function callTool(actor: Actor, name: string, toolArguments: McpArguments) {

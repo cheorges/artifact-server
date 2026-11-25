@@ -66,7 +66,6 @@ import {
   publicLinkPolicies,
   type PublicLinkPolicy,
 } from "../core/public-link-policy.js";
-import {mayChangeRestriction} from "../core/artifact-visibility.js";
 import {principalKinds, type Principal} from "../core/identity.js";
 import {
   gitHistoryProviders,
@@ -972,18 +971,16 @@ export function createArtifactMcpServer(
         ),
       );
       // Who else may see the artifact is for its owner and administrators only.
-      const grants = mayChangeRestriction(identity.principal, details.artifact)
-        ? await runMcpApplicationEffect(
-          dependencies,
-          ArtifactManagementService.use((management) =>
-            management.getGrants({
-              artifactId: details.artifact.id,
-              principal: identity.principal,
-              projectId: details.artifact.projectId,
-            })
-          ),
-        )
-        : null;
+      const grants = await runMcpApplicationEffect(
+        dependencies,
+        ArtifactManagementService.use((management) =>
+          management.getGrantsForViewer({
+            artifactId: details.artifact.id,
+            principal: identity.principal,
+            projectId: details.artifact.projectId,
+          })
+        ),
+      );
       return {
         artifact: details.artifact,
         current: versionProjection(

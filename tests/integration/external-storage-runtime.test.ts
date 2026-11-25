@@ -2383,6 +2383,27 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       await identities.deactivateMember(grantInstallationId, "member_anna", changedAt);
       expect(await repository.isArtifactGrantee(projectId, granted.body.artifact.id, "member_anna")).toBe(false);
       expect(await listedFor({kind: "owned_or_granted", principalId: "member_anna"})).toStrictEqual([]);
+
+      // Deleting the artifact removes the addresses it was shared with.
+      await repository.deleteArtifact({
+        artifactId: granted.body.artifact.id,
+        authorizedByPrincipalId: null,
+        createdAt: changedAt,
+        expectedCurrentVersionId: granted.body.version.id,
+        idempotencyKey: `grants-delete-${randomUUID()}`,
+        inputDigest: "grants-delete",
+        principalId: owner,
+        projectId,
+      });
+      const remaining = await database.run(Effect.gen(function*() {
+        const sql = yield* SqlClient;
+        return yield* sql.unsafe<object>(
+          `SELECT count(*)::int AS total FROM artifact_grants
+           WHERE installation_id = $1 AND artifact_id = $2`,
+          [grantInstallationId, granted.body.artifact.id],
+        );
+      }));
+      expect(z.object({total: z.number()}).parse(remaining[0]).total).toBe(0);
     } finally {
       await database.close();
       await server.stop();

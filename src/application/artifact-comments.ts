@@ -37,7 +37,9 @@ import {
   principalCapabilities,
   type Principal,
 } from "../core/identity.js";
+import {mayChangeRestriction} from "../core/artifact-visibility.js";
 import {
+  accessSettings,
   commentThreadStates,
   dispatchedThreadFilters,
   type ArtifactRecord,
@@ -509,11 +511,16 @@ function makeArtifactCommentService(
   )(function*(
     principal: Principal,
     author: CommentAuthor,
+    artifact: ArtifactRecord,
   ): Effect.fn.Return<CommentAuthor, AuthorizationDenied> {
+    if (principal.id === author.principalId) return author;
+    // People a restricted artifact is shared with comment on it, but only its
+    // owner and administrators remove anyone else's comments (AUTH-037).
     if (
-      principal.id === author.principalId ||
-      isHumanAdministrator(principal) ||
-      hasCapability(principal, principalCapabilities.manageAnyArtifact)
+      (isHumanAdministrator(principal) ||
+        hasCapability(principal, principalCapabilities.manageAnyArtifact)) &&
+      (artifact.accessSetting !== accessSettings.restricted ||
+        mayChangeRestriction(principal, artifact))
     ) {
       return author;
     }
@@ -676,7 +683,7 @@ function makeArtifactCommentService(
         artifact.id,
         command.threadId,
       );
-      yield* requireCommentRemoval(command.principal, thread.author);
+      yield* requireCommentRemoval(command.principal, thread.author, artifact);
       const deletedAt = DateTime.formatIso(yield* dependencies.clock.now);
       return yield* dependencies.repository.deleteThread({
         artifactId: artifact.id,
@@ -699,6 +706,16 @@ function makeArtifactCommentService(
       // the artifact-management capability (spec §2).
       yield* authorization.requireDispatchSend(command.principal);
       const artifact = yield* requireArtifact(command.principal, project.id, command.artifactId);
+      // Clearing removes everyone's comments, so on a restricted artifact it
+      // stays with the owner and administrators, like dispatch (AUTH-037).
+      if (
+        artifact.accessSetting === accessSettings.restricted &&
+        !mayChangeRestriction(command.principal, artifact)
+      ) {
+        return yield* new AuthorizationDenied({
+          message: "Only the owner or an administrator can clear comments on this artifact.",
+        });
+      }
       if (command.versionId !== null) {
         yield* requireVersion(project.id, artifact.id, command.versionId);
       }
@@ -788,7 +805,7 @@ function makeArtifactCommentService(
         command.threadId,
       );
       const reply = yield* requireReply(thread.id, command.replyId);
-      yield* requireCommentRemoval(command.principal, reply.author);
+      yield* requireCommentRemoval(command.principal, reply.author, artifact);
       const deletedAt = DateTime.formatIso(yield* dependencies.clock.now);
       yield* dependencies.repository.deleteReply({
         artifactId: artifact.id,

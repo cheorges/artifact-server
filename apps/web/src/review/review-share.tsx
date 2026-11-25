@@ -44,6 +44,8 @@ type CopiedTarget =
 const copiedResetMilliseconds = 1_600;
 
 interface ReviewShareControlProps {
+  /** False when the artifact was shared with the viewer, who may not change its access. */
+  readonly canManageAccess: boolean;
   /** Whether the viewer may add and remove people: the owner or an administrator. */
   readonly canManageGrants: boolean;
   readonly details: ArtifactDetails | null;
@@ -57,6 +59,7 @@ interface ReviewShareControlProps {
 
 /** Share one artifact from either the standard viewer header or focus controls. */
 export function ReviewShareControl({
+  canManageAccess,
   canManageGrants,
   details,
   onArtifactChanged,
@@ -293,14 +296,16 @@ export function ReviewShareControl({
                     People with access to this Artifact Server can review this exact version.
                     {publicArtifact ? " The latest raw artifact is public." : ""}
                   </p>
-                  <button
-                    className="as-button"
-                    disabled={details === null}
-                    onClick={openAccess}
-                    type="button"
-                  >
-                    Manage access
-                  </button>
+                  {canManageAccess ? (
+                    <button
+                      className="as-button"
+                      disabled={details === null}
+                      onClick={openAccess}
+                      type="button"
+                    >
+                      Manage access
+                    </button>
+                  ) : null}
                 </div>
 
                 <section aria-labelledby="as-share-secondary-heading" className="as-share-secondary">

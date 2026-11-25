@@ -1650,6 +1650,9 @@ export class PostgresArtifactRepository implements
             AND deleted_at IS NULL
           RETURNING id`;
         if (updated.length !== 1) return yield* changedDuringManagement();
+        // The people it was shared with go with it (decision 0033).
+        yield* sql`DELETE FROM artifact_grants
+          WHERE installation_id = ${installationId} AND artifact_id = ${command.artifactId}`;
         yield* this.#insertAction(
           command,
           artifactActionKinds.delete,

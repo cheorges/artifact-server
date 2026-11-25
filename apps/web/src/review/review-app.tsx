@@ -66,6 +66,7 @@ import {
   accessPillLabel,
   makeCurrentOwnerNotice,
   type OwnershipViewer,
+  viewerMayManageArtifact,
   viewerOwnsOrAdministersArtifact,
 } from "./artifact-ownership.ts";
 import artifactServerAnimationUrl from "./assets/artifact-server.svg";
@@ -1023,6 +1024,14 @@ function ArtifactReview({
   const canDeleteArtifact = canManageArtifacts
     && details !== null
     && viewerOwnsOrAdministersArtifact(session.principal, details.artifact.ownerPrincipalId);
+  // A restricted artifact shared with the viewer is theirs to read and comment
+  // on, not to manage (AUTH-037).
+  const viewerMayManageThis = details !== null && viewerMayManageArtifact(
+    session.principal,
+    details.artifact.accessSetting,
+    details.artifact.ownerPrincipalId,
+  );
+  const canManageThisArtifact = canManageArtifacts && viewerMayManageThis;
   // Who an artifact is shared with is for its owner and administrators (AUTH-038).
   const canManageGrants = canManageArtifacts
     && details !== null
@@ -1745,6 +1754,7 @@ function ArtifactReview({
                     <span className="as-focus-controls__count">{openCommentCount}</span>
                   </button>
                   <ReviewShareControl
+                    canManageAccess={viewerMayManageThis}
                     canManageGrants={canManageGrants}
                     details={details}
                     key={`focus-share-${details?.artifact.id ?? "empty"}`}
@@ -1867,6 +1877,7 @@ function ArtifactReview({
                 </span>
               </button>
               <ReviewShareControl
+                canManageAccess={viewerMayManageThis}
                 canManageGrants={canManageGrants}
                 details={details}
                 key={`header-share-${details?.artifact.id ?? "empty"}`}
@@ -2076,7 +2087,8 @@ function ArtifactReview({
             ) : inspectorTab === "details" ? (
               <DetailsInspector
                 canDelete={canDeleteArtifact}
-                canManage={canManageArtifacts}
+                canEditTags={viewerMayManageThis}
+                canManage={canManageThisArtifact}
                 details={details}
                 linkedArtifacts={session.capabilities.linkedArtifacts}
                 onCapture={captureLinkedArtifact}
@@ -2103,7 +2115,7 @@ function ArtifactReview({
               />
             ) : inspectorTab === "versions" ? (
               <VersionsInspector
-                canManage={canManageArtifacts}
+                canManage={canManageThisArtifact}
                 comparisonLoading={comparisonLoading}
                 currentVersionId={details.artifact.currentVersionId}
                 onCompare={compareVersions}
@@ -2194,6 +2206,7 @@ function ReviewDownloadControl({
 
 function DetailsInspector({
   canDelete,
+  canEditTags,
   canManage,
   details,
   linkedArtifacts,
@@ -2205,6 +2218,7 @@ function DetailsInspector({
   viewer,
 }: {
   readonly canDelete: boolean;
+  readonly canEditTags: boolean;
   readonly canManage: boolean;
   readonly details: ArtifactDetails;
   readonly linkedArtifacts: boolean;
@@ -2254,6 +2268,7 @@ function DetailsInspector({
       </InspectorSection>
       <TagsInspector
         artifact={details.artifact}
+        canEdit={canEditTags}
         key={details.artifact.id}
         onChange={onTagsChange}
       />
@@ -2289,9 +2304,11 @@ function DetailsInspector({
 
 function TagsInspector({
   artifact,
+  canEdit,
   onChange,
 }: {
   readonly artifact: ArtifactDetails["artifact"];
+  readonly canEdit: boolean;
   readonly onChange: (tags: readonly string[]) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
@@ -2325,7 +2342,7 @@ function TagsInspector({
 
   return (
     <InspectorSection
-      action={editing ? null : (
+      action={editing || !canEdit ? null : (
         <button
           className="as-inspector-section__action"
           onClick={() => setEditing(true)}

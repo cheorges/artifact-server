@@ -175,8 +175,9 @@ with me", open every version, and comment; they never manage it.
 
 A grant matches an active member whose current email equals the address after
 trimming and lowercasing, so it can name someone who is not a member yet: it
-applies once they are admitted. If the issuer changes a member's email, their
-grants stop matching on the next request. Removing a grant ends that person's
+applies once they are admitted. Grants match the email Artifact Server recorded
+when the member was admitted; a later email change at the issuer does not update
+it, so share with that recorded address. Removing a grant ends that person's
 open content sessions at once; copies they already downloaded cannot be
 recalled. Grants are kept, but unused, while the artifact has another access
 setting, and one artifact holds at most 100.

@@ -2960,6 +2960,13 @@ export function createD1ArtifactRepository(
             command.artifactId,
             command.expectedCurrentVersionId,
           ),
+          // The people it was shared with go with it (decision 0033), only once
+          // the artifact is deleted in this batch.
+          database.prepare(`
+            DELETE FROM artifact_grants
+            WHERE artifact_id = ?
+              AND (SELECT deleted_at FROM artifacts WHERE id = ?) = ?
+          `).bind(command.artifactId, command.artifactId, command.createdAt),
           actionStatement(command, command.expectedCurrentVersionId, artifactActionKinds.delete),
           idempotencyStatement(
             command,

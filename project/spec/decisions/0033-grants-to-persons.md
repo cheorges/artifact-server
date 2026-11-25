@@ -19,7 +19,7 @@ exactly as 0030 describes.
 | Request | Result |
 | --- | --- |
 | Grantee lists, reads, opens content, compares, comments | allowed |
-| Grantee publishes, restores, changes tags, access or grants, deletes, dispatches, asks for a git-history credential | refused |
+| Grantee publishes, restores, changes tags, access or grants, deletes, dispatches, clears or removes other people's comments, asks for a git-history credential | refused |
 | Anyone else (member or service principal) | not found, as in 0030 |
 
 ## Recorded decisions
@@ -37,8 +37,9 @@ to a member.
 A grant is stored for any well-formed address and matches as soon as an
 active member with that email exists, whichever way they were admitted. The
 answer is the same for members and non-members, so the share dialog does not
-reveal who is a member. If a member's email changes, their grants stop
-matching.
+reveal who is a member. Grants match the email recorded when the member was
+admitted; Artifact Server does not update it when the issuer's email changes,
+so a grant keeps following the recorded address.
 
 ### Grants are kept while not restricted
 
@@ -48,7 +49,8 @@ while the artifact is `restricted`. Switching away and back restores them.
 ### Revocation at change time
 
 Removing a grant deletes that person's content sessions and bootstraps for
-the artifact in the same transaction. Switching to `restricted` keeps the
+the artifact in the same transaction. Deleting an artifact removes its grants
+in the same transaction. Switching to `restricted` keeps the
 sessions of the owner, administrators and current grantees.
 
 ### Bounded

@@ -53,3 +53,17 @@ export function accessPillLabel(
   if (access === "account_required") return "members";
   return viewerOwnsOrAdministersArtifact(viewer, ownerPrincipalId) ? "only me" : "shared with you";
 }
+
+/**
+ * Whether the interface offers management of this artifact (Make current,
+ * Edit tags, Manage access) to a viewer who has management rights at all. A
+ * restricted artifact the viewer neither owns nor administers was shared with
+ * them to read and comment only, and the server refuses its management.
+ */
+export function viewerMayManageArtifact(
+  viewer: OwnershipViewer,
+  access: "account_required" | "public_link" | "restricted",
+  ownerPrincipalId: string | null,
+): boolean {
+  return access !== "restricted" || viewerOwnsOrAdministersArtifact(viewer, ownerPrincipalId);
+}

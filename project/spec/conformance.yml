@@ -1848,7 +1848,7 @@ requirements:
     source: {file: decisions/0033-grants-to-persons.md, anchor: decision}
     acceptance:
       behavior: {id: AUTH-037-B, description: "A member granted by email, including before they are admitted and with different case and whitespace, lists, searches, reads, opens content of, compares, and comments on a restricted artifact through HTTP, MCP, and a member-bound key, and finds it under shared-with-me."}
-      failure: {id: AUTH-037-F, description: "Ungranted members and service principals get not found; a grantee cannot publish, restore, change tags, access, or grants, delete, dispatch, or obtain git-history credentials; a deactivated grantee or one whose email changed loses access; grants on an artifact that is not restricted change nothing."}
+      failure: {id: AUTH-037-F, description: "Ungranted members and service principals get not found; a grantee cannot publish, restore, change tags, access, or grants, delete, dispatch, clear or remove other people's comments, or obtain git-history credentials; a deactivated grantee, or a member whose recorded email no longer matches the grant, loses access; grants on an artifact that is not restricted change nothing."}
     deployments: *all
     status: implementing
     proof_gap: AUTH-037-B and AUTH-037-F run against the local SQLite server through HTTP, MCP, and member-bound keys; SQLite storage tests prove the email match and deactivation; a Postgres runtime test covers the listing filter, the shared-with-me scope, and deactivation; a D1 runtime test covers grantee reads and the shared-with-me scope; and a browser test proves the Shared with me filter in Chromium. The git-history credential refusal has no dedicated test, and no deployment-specific evidence is recorded.
@@ -1862,7 +1862,7 @@ requirements:
     source: {file: decisions/0033-grants-to-persons.md, anchor: decision}
     acceptance:
       behavior: {id: AUTH-038-B, description: "The owner and an administrator add and remove grants through HTTP and MCP, repeated adds are no-ops, the list reports whether it is active, switching away from restricted keeps the list, and switching to restricted keeps grantee and administrator content sessions."}
-      failure: {id: AUTH-038-F, description: "Non-owners get 403 or not found, grantees cannot read the list, and an owner's key without the management capability is refused; malformed addresses, an address both added and removed, and changes above 100 grants are refused with nothing changed; removing a grant deletes that member's content sessions and bootstraps for the artifact."}
+      failure: {id: AUTH-038-F, description: "Non-owners get 403 or not found, grantees cannot read the list, and an owner's key without the management capability is refused; malformed addresses, an address both added and removed, and changes above 100 grants are refused with nothing changed; removing a grant deletes that member's content sessions and bootstraps for the artifact, and deleting the artifact removes its grants."}
     deployments: *all
     status: implementing
     proof_gap: AUTH-038-B and AUTH-038-F run against the local SQLite server through HTTP and MCP; SQLite storage tests prove the schema, the cap, and revocation on switching and on removal; a Postgres runtime test covers concurrent adds, the cap, and both revocations; a D1 runtime test covers the upgrade, the cap, and revocation on removal; and a browser test proves the Share dialog's people section in Chromium. No deployment-specific evidence is recorded.

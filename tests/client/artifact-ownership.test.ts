@@ -9,6 +9,7 @@ import {describe, expect, test} from "vitest";
 import {
   accessPillLabel,
   makeCurrentOwnerNotice,
+  viewerMayManageArtifact,
   viewerOwnsOrAdministersArtifact,
 } from "../../apps/web/src/review/artifact-ownership.js";
 
@@ -60,5 +61,18 @@ describe("the access pill (AUTH-037)", () => {
     expect(accessPillLabel(member, "account_required", "member_ada")).toBe("members");
     expect(accessPillLabel(member, "public_link", "member_ada")).toBe("public");
     expect(accessPillLabel(serviceKey, "account_required", null)).toBe("members");
+  });
+});
+
+describe("management controls on a shared artifact (AUTH-037)", () => {
+  test("a grantee is not offered management of a restricted artifact; its owner and administrators are", () => {
+    expect(viewerMayManageArtifact(member, "restricted", "member_ada")).toBe(false);
+    expect(viewerMayManageArtifact(member, "restricted", "member_ben")).toBe(true);
+    expect(viewerMayManageArtifact(administrator, "restricted", "member_ada")).toBe(true);
+  });
+
+  test("other settings leave management to the ordinary rights", () => {
+    expect(viewerMayManageArtifact(member, "account_required", "member_ada")).toBe(true);
+    expect(viewerMayManageArtifact(member, "public_link", "member_ada")).toBe(true);
   });
 });

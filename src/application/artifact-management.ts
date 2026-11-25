@@ -345,6 +345,10 @@ interface ArtifactManagementOperations {
   readonly getGrants: (
     command: ReadArtifactCommand,
   ) => Effect.Effect<ArtifactGrantList, ArtifactManagementFailure>;
+  /** `getGrants`, or null for a caller who may not see the list. */
+  readonly getGrantsForViewer: (
+    command: ReadArtifactCommand,
+  ) => Effect.Effect<ArtifactGrantList | null, ArtifactManagementFailure>;
   readonly getVersion: (
     command: ReadArtifactVersionCommand,
   ) => Effect.Effect<ArtifactVersion, ArtifactManagementFailure>;
@@ -595,16 +599,16 @@ function makeArtifactManagementService(
         command.principal,
         command.projectId,
       );
+      // Only members are granted, so nothing is shared with a service principal.
+      if (command.scope === "shared_with_me" && command.principal.kind !== principalKinds.human) {
+        return {items: [], nextCursor: null};
+      }
       return yield* dependencies.repository.listArtifacts({
         comments,
         cursor: command.cursor,
         limit,
         ownerPrincipalId: command.scope === "mine" ? command.principal.id : null,
-        // Only members are granted, so a service principal shares nothing.
-        sharedWithPrincipalId: command.scope === "shared_with_me" &&
-            command.principal.kind === principalKinds.human
-          ? command.principal.id
-          : null,
+        sharedWithPrincipalId: command.scope === "shared_with_me" ? command.principal.id : null,
         projectId: project.id,
         restrictedScope: restrictedArtifactScope(command.principal),
         search,
@@ -691,6 +695,14 @@ function makeArtifactManagementService(
       return yield* dependencies.repository.listArtifactGrants(
         artifact.projectId,
         artifact.id,
+      );
+    },
+  );
+
+  const getGrantsForViewer = Effect.fn("ArtifactManagementService.getGrantsForViewer")(
+    function*(command: ReadArtifactCommand) {
+      return yield* getGrants(command).pipe(
+        Effect.catchTag("AuthorizationDenied", () => Effect.succeed(null)),
       );
     },
   );
@@ -891,6 +903,7 @@ function makeArtifactManagementService(
     getArtifact,
     getArtifactWithOwnerName,
     getGrants,
+    getGrantsForViewer,
     getVersion,
     getVersionDetails,
     listArtifactActions,

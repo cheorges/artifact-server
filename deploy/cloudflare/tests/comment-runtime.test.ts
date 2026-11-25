@@ -537,15 +537,19 @@ describe("Cloudflare D1 comments", () => {
       const as = (
         member: MemberKey,
         url: string,
-        request: {readonly body?: string; readonly method?: string} = {},
-      ) => grantsWorker.fetch(url, {
-        body: request.body ?? null,
-        headers: {
-          Authorization: `Bearer ${member.token}`,
-          "Content-Type": "application/json",
-        },
-        method: request.method ?? "GET",
-      });
+        request: {readonly body?: string; readonly idempotencyKey?: string; readonly method?: string} = {},
+      ) => {
+        const headers: [string, string][] = [
+          ["Authorization", `Bearer ${member.token}`],
+          ["Content-Type", "application/json"],
+        ];
+        if (request.idempotencyKey !== undefined) headers.push(["Idempotency-Key", request.idempotencyKey]);
+        return grantsWorker.fetch(url, {
+          body: request.body ?? null,
+          headers,
+          method: request.method ?? "GET",
+        });
+      };
       const changeGrants = (
         member: MemberKey,
         change: {readonly add?: readonly string[]; readonly remove?: readonly string[]},
@@ -602,6 +606,22 @@ describe("Cloudflare D1 comments", () => {
         `).get(ben.memberId, ben.memberId)).total).toBe(0);
       } finally {
         revoked.close();
+      }
+
+      // Deleting the artifact removes the addresses it was shared with.
+      expect((await changeGrants(ada, {add: ["dora@example.test"]})).status).toBe(200);
+      expect((await as(ada, artifactUrl, {
+        body: JSON.stringify({expectedCurrentVersionId: target.version.id}),
+        idempotencyKey: "grants-delete-target-0001",
+        method: "DELETE",
+      })).status).toBe(200);
+      const afterDelete = new DatabaseSync(d1File, {readOnly: true});
+      try {
+        expect(z.object({total: z.number()}).parse(afterDelete.prepare(
+          "SELECT COUNT(*) AS total FROM artifact_grants WHERE artifact_id = ?",
+        ).get(target.artifact.id)).total).toBe(0);
+      } finally {
+        afterDelete.close();
       }
     } finally {
       await grantsWorker.stop();

@@ -1814,6 +1814,10 @@ export class SqliteArtifactRepository implements
         if (update.changes !== 1) {
           throw changedDuringManagement();
         }
+        // The people it was shared with go with it (decision 0033).
+        this.#database
+          .prepare("DELETE FROM artifact_grants WHERE artifact_id = ?")
+          .run(command.artifactId);
         this.#insertAction(
           command.projectId,
           command.artifactId,
