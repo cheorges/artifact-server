@@ -1862,7 +1862,7 @@ requirements:
     source: {file: decisions/0033-grants-to-persons.md, anchor: decision}
     acceptance:
       behavior: {id: AUTH-038-B, description: "The owner and an administrator add and remove grants through HTTP and MCP, repeated adds are no-ops, the list reports whether it is active, switching away from restricted keeps the list, and switching to restricted keeps grantee and administrator content sessions."}
-      failure: {id: AUTH-038-F, description: "Non-owners get 403 or not found and grantees cannot read the list; malformed addresses, an address both added and removed, and changes above 100 grants are refused with nothing changed; removing a grant deletes that member's content sessions and bootstraps for the artifact."}
+      failure: {id: AUTH-038-F, description: "Non-owners get 403 or not found, grantees cannot read the list, and an owner's key without the management capability is refused; malformed addresses, an address both added and removed, and changes above 100 grants are refused with nothing changed; removing a grant deletes that member's content sessions and bootstraps for the artifact."}
     deployments: *all
     status: implementing
     proof_gap: Local conformance tests run on SQLite; Postgres covers concurrent adds and the cap; no deployment-specific evidence is recorded.

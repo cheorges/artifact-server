@@ -12,8 +12,9 @@ to people by exact email address. An active member whose current email
 matches a grant can find the artifact, list it under "Shared with me", open
 every version, compare versions, and read and write comments. Only the owner
 and administrators publish, restore, change tags, access or grants, delete,
-or dispatch it. With no grants, `restricted` behaves exactly as 0030
-describes.
+or dispatch it; an API key also needs the management capability to read or
+change grants, as for an access change. With no grants, `restricted` behaves
+exactly as 0030 describes.
 
 | Request | Result |
 | --- | --- |

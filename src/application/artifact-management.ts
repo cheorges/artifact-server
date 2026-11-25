@@ -675,6 +675,8 @@ function makeArtifactManagementService(
     );
     const artifact = yield* requireArtifact(project.id, command.artifactId);
     yield* requireVisibleWithGrants(dependencies.grants, command.principal, artifact);
+    // Like an access change: an API key also needs the management capability.
+    yield* authorization.requireArtifactManagement(command.principal);
     if (!mayChangeRestriction(command.principal, artifact)) {
       return yield* new AuthorizationDenied({
         message: "Only the owner or an administrator can change who sees this artifact.",

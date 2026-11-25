@@ -312,6 +312,11 @@ describe("grants to persons on restricted artifacts", () => {
     expect((await request(carl, "GET", `${draft.id}/grants`)).status).toBe(missing.status);
     expect((await grant(service, draft.id, ["bot@example.test"])).status).toBe(missing.status);
 
+    // A key of the owner's without the management capability cannot share.
+    const readingKey = await issueKey(ada.id, "Ada's reading key", ["artifact:read"]);
+    expect((await grant(readingKey, draft.id, ["dora@example.test"])).status).toBe(403);
+    expect((await request(readingKey, "GET", `${draft.id}/grants`)).status).toBe(403);
+
     // On an artifact every member sees, other members get 403, not the list.
     const open = await publishAs(ada, "Ada's open limits");
     expect((await request(carl, "GET", `${open.id}/grants`)).status).toBe(403);
@@ -405,9 +410,13 @@ describe("grants to persons on restricted artifacts", () => {
     return issueKey(memberId, `${displayName}'s key`);
   }
 
-  async function issueKey(memberId: string | undefined, name: string): Promise<Actor> {
+  async function issueKey(
+    memberId: string | undefined,
+    name: string,
+    capabilities: readonly string[] = allCapabilities,
+  ): Promise<Actor> {
     const keyRequest: IssueKeyRequest = {
-      capabilities: [...allCapabilities],
+      capabilities: [...capabilities],
       expiresAt: "2099-01-01T00:00:00.000Z",
       name,
     };
