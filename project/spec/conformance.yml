@@ -1387,11 +1387,11 @@ requirements:
 
   - id: AUTH-008
     kind: security
-    behavior: Every admitted human member can manage artifacts in the installation's projects, except restricted artifacts, which only their owner and administrators manage (AUTH-031); service principals act only within explicit capabilities.
+    behavior: Every admitted human member can manage artifacts in the installation's projects, except restricted artifacts, which only their owner and administrators manage (AUTH-031), and deletion, which only the owner and administrators may do (AUTH-036); service principals act only within explicit capabilities.
     owner: authorization
     source: {file: artifact-server-product-spec.html, anchor: sharing}
     acceptance:
-      behavior: {id: AUTH-008-B, description: "Confirm that admitted human members can read, publish, restore, change visibility, tag, and delete project artifacts."}
+      behavior: {id: AUTH-008-B, description: "Confirm that admitted human members can read, publish, restore, change visibility, and tag project artifacts; deletion follows AUTH-036."}
       failure: {id: AUTH-008-F, description: "Reject service principals that lack the explicit capability required for the requested read or mutation."}
     deployments: *all
     status: behavior_verified
@@ -1825,6 +1825,20 @@ requirements:
     status: implementing
     proof_gap: AUTH-035-B and AUTH-035-F run against the local SQLite server; a service test proves the answer without names when the lookup fails; browser tests prove the catalog, Details, Activity, the Mine filter, and the WebMCP list in Chromium; and Postgres and D1 runtime tests cover the name lookup, rotated service keys and their tie-break, a display name that is the email, the owner filter, and a D1 page of 55 owners. Accepted, not tested beyond WebMCP. On a single-person local installation, mine lists what the signed-in person published, not what the CLI's own service key published. No deployment-specific evidence is recorded.
     depends_on: [AUTH-030]
+    evidence: []
+
+  - id: AUTH-036
+    kind: security
+    behavior: Only an artifact's owner, as a member through any of their own channels or as the service key that published it, and installation administrators can delete it through HTTP, MCP, and the web interface; no capability lets anyone else delete, while any member may still make an earlier version current.
+    owner: authorization
+    source: {file: decisions/0032-owner-only-delete.md, anchor: decision}
+    acceptance:
+      behavior: {id: AUTH-036-B, description: "The owner deletes over HTTP and MCP, a service key deletes the artifact it published, an administrator deletes another member's artifact, and another member still makes an earlier version current."}
+      failure: {id: AUTH-036-F, description: "Another member over HTTP and MCP and a service key with artifact:manage:any are refused with AUTHORIZATION_DENIED, and the artifact stays listed."}
+    deployments: *all
+    status: implementing
+    proof_gap: AUTH-036-B and AUTH-036-F run against the local SQLite server, the web rule is unit-tested, a browser test proves the owner notice on Make current and Delete for an administrator in Chromium, and Postgres and D1 runtime tests refuse a delete by a caller that does not own the artifact. No deployment-specific evidence is recorded.
+    depends_on: [AUTH-008, AUTH-030]
     evidence: []
 
   - id: SEC-001

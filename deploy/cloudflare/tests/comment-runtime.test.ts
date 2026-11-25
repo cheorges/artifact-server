@@ -376,7 +376,7 @@ describe("Cloudflare D1 comments", () => {
     expect(afterRestart.items[0]?.state).toBe("resolved");
   }, 120_000);
 
-  it("AUTH-035: names owners from D1 members and service keys and lists only the caller's own artifacts with scope=mine", async () => {
+  it("AUTH-035 AUTH-036: names owners from D1 members and service keys, lists only the caller's own artifacts with scope=mine, and lets only the owner delete", async () => {
     const namesDirectory = await mkdtemp(
       join(tmpdir(), "artifact-server-cloudflare-names-"),
     );
@@ -451,6 +451,18 @@ describe("Cloudflare D1 comments", () => {
         `${origin}/api/v1/artifacts?scope=mine`,
       )).json());
       expect(mine.artifacts.map(({artifact}) => artifact.id)).toEqual([own.artifact.id]);
+
+      const deleteAs = (artifact: typeof own) =>
+        namesWorker.fetch(`${origin}/api/v1/artifacts/${artifact.artifact.id}`, {
+          body: JSON.stringify({expectedCurrentVersionId: artifact.version.id}),
+          headers: mutationHeaders(`names-delete-${artifact.artifact.id}`),
+          method: "DELETE",
+        });
+      const refused = await deleteAs(byAda);
+      expect(refused.status).toBe(403);
+      expect(failureSchema.parse(await refused.json()).error.code)
+        .toBe("AUTHORIZATION_DENIED");
+      expect((await deleteAs(own)).status).toBe(200);
     } finally {
       await namesWorker.stop();
       await rm(namesDirectory, {force: true, recursive: true});

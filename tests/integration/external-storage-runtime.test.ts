@@ -2229,7 +2229,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
     }
   });
 
-  test("AUTH-035 foundation: Postgres names members and rotated service keys and lists only one owner's artifacts", async () => {
+  test("AUTH-035 AUTH-036 foundation: Postgres names members and rotated service keys, lists only one owner's artifacts, and lets only the owner delete", async () => {
     expect.hasAssertions();
     const ownerIdentity = {
       apiToken: managedTestKey("postgres-names"),
@@ -2243,6 +2243,11 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       content: "<p>own</p>",
       idempotencyKey: `names-own-${randomUUID()}`,
       name: "Own page",
+    });
+    const handedOver = await publishNew(server.baseUrl, ownerIdentity.apiToken, {
+      content: "<p>handed over</p>",
+      idempotencyKey: `names-handed-${randomUUID()}`,
+      name: "Ada's page",
     });
     const owner = managedTestPrincipal(ownerIdentity.apiToken).principalId;
     const projectId = published.body.artifact.projectId;
@@ -2341,9 +2346,33 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
           sort: "newest",
           tags: [],
         })).items.map(({id}) => id);
+      await database.run(Effect.gen(function*() {
+        const sql = yield* SqlClient;
+        yield* sql`
+          UPDATE artifacts SET owner_principal_id = 'member_ada'
+          WHERE installation_id = ${ownerIdentity.installationId}
+            AND id = ${handedOver.body.artifact.id}
+        `;
+      }));
       expect(await listedFor(owner)).toEqual([published.body.artifact.id]);
-      expect(await listedFor("member_ada")).toEqual([]);
-      expect(await listedFor(null)).toEqual([published.body.artifact.id]);
+      expect(await listedFor("member_ada")).toEqual([handedOver.body.artifact.id]);
+      expect((await listedFor(null)).toSorted()).toEqual(
+        [published.body.artifact.id, handedOver.body.artifact.id].toSorted(),
+      );
+
+      const deleteAs = (artifact: typeof published.body) =>
+        fetch(`${server.baseUrl}/api/v1/artifacts/${artifact.artifact.id}`, {
+          body: JSON.stringify({expectedCurrentVersionId: artifact.version.id}),
+          headers: {
+            Authorization: `Bearer ${ownerIdentity.apiToken}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": `delete-${randomUUID()}`,
+          },
+          method: "DELETE",
+        });
+      expect((await deleteAs(handedOver.body)).status).toBe(403);
+      expect((await deleteAs(published.body)).status).toBe(200);
+      expect(await listedFor(null)).toEqual([handedOver.body.artifact.id]);
     } finally {
       await database.close();
       await server.stop();

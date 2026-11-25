@@ -43,6 +43,22 @@ export function mayChangeRestriction(
   return isHumanAdministrator(principal) || ownsArtifact(principal, artifact);
 }
 
+/**
+ * Report whether a principal may delete an artifact.
+ *
+ * Deleting cannot be undone, so only installation administrators and the
+ * owner may do it: the member through any of their own channels, or the
+ * service key that published it. No capability lets anyone else delete,
+ * `artifact:manage:any` included.
+ */
+export function mayDeleteArtifact(
+  principal: Principal,
+  artifact: Pick<ArtifactRecord, "ownerPrincipalId">,
+): boolean {
+  return isHumanAdministrator(principal) ||
+    (artifact.ownerPrincipalId !== null && artifact.ownerPrincipalId === principal.id);
+}
+
 /** The restricted artifacts one principal may list. */
 export function restrictedArtifactScope(
   principal: Principal,

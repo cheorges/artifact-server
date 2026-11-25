@@ -30,6 +30,7 @@ import {
 } from "../core/errors.js";
 import {
   mayChangeRestriction,
+  mayDeleteArtifact,
   requireArtifactVisible,
   restrictedArtifactScope,
 } from "../core/artifact-visibility.js";
@@ -740,6 +741,12 @@ function makeArtifactManagementService(
       );
       yield* requireArtifactVisible(command.principal, artifact);
       yield* authorization.requireArtifactManagement(command.principal);
+      // A delete cannot be undone, so it stays with the owner and administrators.
+      if (!mayDeleteArtifact(command.principal, artifact)) {
+        return yield* new AuthorizationDenied({
+          message: "Only the owner or an administrator can delete this artifact.",
+        });
+      }
       const idempotencyKey = yield* parseIdempotencyKey(command.idempotencyKey);
       const createdAt = DateTime.formatIso(yield* dependencies.clock.now);
       return yield* dependencies.repository.deleteArtifact({

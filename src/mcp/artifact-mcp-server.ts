@@ -1419,7 +1419,7 @@ export function createArtifactMcpServer(
     {
       title: "Delete an artifact",
       description:
-        "Delete one artifact from active listings after an optimistic current-version check. This is destructive; retained immutable version records are reported.",
+        "Delete one artifact from active listings after an optimistic current-version check. Only the artifact's owner or an installation administrator can delete it. This is destructive; retained immutable version records are reported.",
       inputSchema: z.object({
         artifactId: artifactIdSchema,
         expectedCurrentVersionId: expectedVersionSchema,

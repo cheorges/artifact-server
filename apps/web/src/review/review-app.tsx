@@ -61,6 +61,7 @@ import {
   sourceDriftDescription,
   sourceFreshnessLabel,
 } from "@/lib/presentation";
+import {makeCurrentOwnerNotice, viewerMayDeleteArtifact} from "./artifact-ownership.ts";
 import artifactServerAnimationUrl from "./assets/artifact-server.svg";
 import {ArtifactMark} from "./artifact-mark.tsx";
 import {
@@ -1010,6 +1011,16 @@ function ArtifactReview({
     && session.principal.authorizedByPrincipalId === null
     && session.principal.membershipRole === "administrator"
   ) || session.principal.capabilities.includes("artifact:manage:any");
+  const canDeleteArtifact = canManageArtifacts
+    && details !== null
+    && viewerMayDeleteArtifact(session.principal, details.artifact.ownerPrincipalId);
+  const makeCurrentNotice = details === null
+    ? null
+    : makeCurrentOwnerNotice(
+      session.principal,
+      details.artifact.ownerPrincipalId,
+      details.ownerDisplayName,
+    );
   const previewKind = reviewPreviewKind(selectedVersion, selectedPath);
   const download = reviewDownload(
     projectId,
@@ -2044,6 +2055,7 @@ function ArtifactReview({
               <InlineState description="Select an artifact to inspect its immutable record." title="Nothing selected" />
             ) : inspectorTab === "details" ? (
               <DetailsInspector
+                canDelete={canDeleteArtifact}
                 canManage={canManageArtifacts}
                 details={details}
                 linkedArtifacts={session.capabilities.linkedArtifacts}
@@ -2080,6 +2092,7 @@ function ArtifactReview({
                   setSelectedVersionId(versionId);
                   setSelectedPath(null);
                 }}
+                ownerNotice={makeCurrentNotice}
                 selectedVersionId={selectedVersionId}
                 versions={versions}
               />
@@ -2159,6 +2172,7 @@ function ReviewDownloadControl({
 }
 
 function DetailsInspector({
+  canDelete,
   canManage,
   details,
   linkedArtifacts,
@@ -2168,6 +2182,7 @@ function DetailsInspector({
   onTombstone,
   version,
 }: {
+  readonly canDelete: boolean;
   readonly canManage: boolean;
   readonly details: ArtifactDetails;
   readonly linkedArtifacts: boolean;
@@ -2234,7 +2249,7 @@ function DetailsInspector({
           </div>
         </InspectorSection>
       )}
-      {canManage ? (
+      {canDelete ? (
         <InspectorSection count={0} title="Danger zone">
           <TombstoneArtifactControl artifact={details.artifact} onConfirm={onTombstone} />
         </InspectorSection>
@@ -2377,6 +2392,7 @@ function VersionsInspector({
   onCompare,
   onMakeCurrent,
   onSelect,
+  ownerNotice,
   selectedVersionId,
   versions,
 }: {
@@ -2389,6 +2405,8 @@ function VersionsInspector({
     expectedCurrentVersionId: string,
   ) => Promise<boolean>;
   readonly onSelect: (versionId: string) => void;
+  /** Names the owner when the viewer is not the artifact's owner. */
+  readonly ownerNotice: string | null;
   readonly selectedVersionId: string | null;
   readonly versions: readonly VersionListItem[];
 }) {
@@ -2449,6 +2467,7 @@ function VersionsInspector({
                   <MakeCurrentControl
                     expectedCurrentVersionId={currentVersionId}
                     onConfirm={onMakeCurrent}
+                    ownerNotice={ownerNotice}
                     version={version}
                   />
                 )}
@@ -2589,6 +2608,7 @@ function TombstoneArtifactControl({
 function MakeCurrentControl({
   expectedCurrentVersionId,
   onConfirm,
+  ownerNotice,
   version,
 }: {
   readonly expectedCurrentVersionId: string;
@@ -2596,6 +2616,7 @@ function MakeCurrentControl({
     versionId: string,
     expectedCurrentVersionId: string,
   ) => Promise<boolean>;
+  readonly ownerNotice: string | null;
   readonly version: Version;
 }) {
   const [open, setOpen] = useState(false);
@@ -2616,6 +2637,7 @@ function MakeCurrentControl({
         <Dialog.Popup className="as-confirm-dialog">
           <Dialog.Title>Make Version {version.number} current?</Dialog.Title>
           <Dialog.Description>
+            {ownerNotice === null ? null : <strong>{ownerNotice} </strong>}
             The stable artifact link will point to Version {version.number}. No saved version is changed or duplicated.
           </Dialog.Description>
           <div className="as-confirm-dialog__actions">

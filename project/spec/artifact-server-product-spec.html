@@ -2072,13 +2072,13 @@
             <details>
               <summary>Who may change an artifact</summary>
               <div class="detail-body">
-                <p>The access settings control reading. They do not grant permission to publish or administer. A restricted artifact narrows every row below to its owner and administrators.</p>
+                <p>The access settings control reading. They do not grant permission to publish or administer. A restricted artifact narrows every row below to its owner and administrators. Only an artifact's owner and installation administrators may delete it (decision 0032).</p>
                 <div class="table-wrap">
                   <table>
-                    <thead><tr><th>Actor</th><th>Read account-required</th><th>Publish</th><th>Change access or delete</th></tr></thead>
+                    <thead><tr><th>Actor</th><th>Read account-required</th><th>Publish</th><th>Change access</th><th>Delete</th></tr></thead>
                     <tbody>
-                      <tr><td>Admitted person</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
-                      <tr><td>Service principal or API key</td><td>Only within its grant</td><td>Only within its grant</td><td>Only when explicitly granted</td></tr>
+                      <tr><td>Admitted person</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Own artifacts; administrators any</td></tr>
+                      <tr><td>Service principal or API key</td><td>Only within its grant</td><td>Only within its grant</td><td>Only when explicitly granted</td><td>Only artifacts it published</td></tr>
                     </tbody>
                   </table>
                 </div>
