@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { request } from "node:http";
 import { createServer } from "node:net";
@@ -33,8 +34,6 @@ import type {BrowserAccess} from "../../src/core/browser-access.js";
 import {defaultCompletedRequestLogSampleRate} from
   "../../src/observability/application-observability.js";
 
-const assignedAddressSchema = z.object({port: z.number().int().positive()});
-
 export interface TestInstallation {
   readonly apiToken: string;
   readonly browserBootstrapToken: string;
@@ -48,15 +47,42 @@ export interface RunningTestServer {
   stop(): Promise<void>;
 }
 
+// Ports a test binds deliberately come from below the operating system's ephemeral range
+// (Linux 32768-60999, macOS and Windows 49152-65535). A port from listen(0) was free only until
+// a parallel test's next outgoing connection or listen(0) took it, so a server sometimes failed
+// with EADDRINUSE between the reservation and its own listen. The system never hands out these
+// ports by itself; only another reservation can pick the same one, and it is drawn at random.
+const firstReservablePort = 20_000;
+const lastReservablePort = 32_767;
+const reservationAttempts = 50;
+
+const listenErrorSchema = z.object({code: z.enum(["EADDRINUSE", "EACCES"])});
+
 /** Reserve one free loopback port so a caller can bind it deliberately. */
 export function reserveLoopbackPort(): Promise<number> {
+  return reserveLoopbackPortWithin(reservationAttempts);
+}
+
+async function reserveLoopbackPortWithin(attemptsLeft: number): Promise<number> {
+  if (attemptsLeft === 0) {
+    throw new Error(
+      `No free loopback port between ${firstReservablePort} and ${lastReservablePort} after ${reservationAttempts} attempts.`,
+    );
+  }
+  const port = randomInt(firstReservablePort, lastReservablePort + 1);
+  return await loopbackPortIsFree(port) ? port : reserveLoopbackPortWithin(attemptsLeft - 1);
+}
+
+function loopbackPortIsFree(port: number): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = assignedAddressSchema.parse(server.address());
+    server.once("error", (error) => {
+      if (listenErrorSchema.safeParse(error).success) resolve(false);
+      else reject(error);
+    });
+    server.listen(port, "127.0.0.1", () => {
       server.close((error) => {
-        if (error === undefined) resolve(address.port);
+        if (error === undefined) resolve(true);
         else reject(error);
       });
     });
