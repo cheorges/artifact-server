@@ -34,7 +34,7 @@ import {
 } from "../core/artifact-visibility.js";
 import type { Principal } from "../core/identity.js";
 import {
-  publicLinkPolicies,
+  isPubliclyReadable,
   type PublicLinkPolicy,
   requireAccessSettingAllowed,
 } from "../core/public-link-policy.js";
@@ -51,6 +51,7 @@ import {
   type VersionRecord,
 } from "../core/model.js";
 import type {
+  ArtifactAccessSettingChange,
   ChangeArtifactAccessSetting,
   ChangeArtifactTags,
   DeleteArtifact,
@@ -98,15 +99,17 @@ export interface ChangeArtifactAccessCommand extends ReadArtifactCommand {
   readonly idempotencyKey: string;
 }
 
-/** The artifact after an access change, and whether the change ended a served public link. */
-export interface ArtifactAccessChange extends ArtifactState {
+/** The artifact after an access change, and whether it may have ended a served public link. */
+export interface ArtifactAccessChange extends ArtifactAccessSettingChange {
   /**
-   * True when the change stopped a public link this installation was serving,
-   * so copies fetched while it was public may still exist elsewhere. A replay
-   * cannot tell the setting before the original change, so it answers true
-   * whenever public links are on and the new setting is not a public link.
+   * True when the replaced setting was publicly readable and the new one is
+   * not, so copies fetched while it was public may still exist elsewhere. A
+   * replay replaced nothing and cannot tell what the original change replaced,
+   * so it counts the earlier setting as a public link: it answers true
+   * whenever public links are on and the new setting is not publicly readable,
+   * even if no link ended.
    */
-  readonly endedPublicLink: boolean;
+  readonly mayHaveEndedPublicLink: boolean;
 }
 
 /** Input for replacing one artifact's complete tag set. */
@@ -145,7 +148,7 @@ export interface ArtifactManagementRepository {
   readonly changeAccessSetting: (
     command: ChangeArtifactAccessSetting,
   ) => Effect.Effect<
-    ArtifactState,
+    ArtifactAccessSettingChange,
     | ArtifactMutationConflict
     | ArtifactNotFound
     | IdempotencyConflict
@@ -570,12 +573,13 @@ function makeArtifactManagementService(
         principalId: command.principal.id,
         projectId: project.id,
       });
-      // With public links off the content service already refuses public
-      // requests, so no change here can end a link that was serving.
-      const endedPublicLink = dependencies.publicLinks === publicLinkPolicies.on &&
-        command.accessSetting !== accessSettings.publicLink &&
-        (state.replayed || artifact.accessSetting === accessSettings.publicLink);
-      return {...state, endedPublicLink};
+      // The repository read the replaced setting inside its transaction, so a
+      // change committed after the read above is not missed.
+      const replaced = state.previousAccessSetting ?? accessSettings.publicLink;
+      const mayHaveEndedPublicLink =
+        isPubliclyReadable(replaced, dependencies.publicLinks) &&
+        !isPubliclyReadable(command.accessSetting, dependencies.publicLinks);
+      return {...state, mayHaveEndedPublicLink};
     },
   );
 

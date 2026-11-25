@@ -414,6 +414,40 @@ describe("Cloudflare D1 comments", () => {
     }
   }, 120_000);
 
+  it("AUTH-034: warns about public copies only when an access change ends a public link", async () => {
+    const warningDirectory = await mkdtemp(
+      join(tmpdir(), "artifact-server-cloudflare-warning-"),
+    );
+    const warningWorker = await startWorker(warningDirectory);
+    try {
+      const published = await publishArtifact(warningWorker, "warning-publish-00001");
+      const changeAccess = async (accessSetting: string, idempotencyKey: string) => {
+        const response = await warningWorker.fetch(
+          `${origin}/api/v1/artifacts/${published.artifact.id}/access`,
+          {
+            body: JSON.stringify({
+              accessSetting,
+              expectedCurrentVersionId: published.version.id,
+            }),
+            headers: mutationHeaders(idempotencyKey),
+            method: "PATCH",
+          },
+        );
+        expect(response.status).toBe(200);
+        return z.object({warning: z.string().nullable()}).parse(await response.json())
+          .warning;
+      };
+      expect(await changeAccess("public_link", "warning-make-public-0001")).toBeNull();
+      expect(await changeAccess("account_required", "warning-end-public-0001"))
+        .toContain("cannot be recalled");
+      expect(await changeAccess("account_required", "warning-again-private-01"))
+        .toBeNull();
+    } finally {
+      await warningWorker.stop();
+      await rm(warningDirectory, {force: true, recursive: true});
+    }
+  }, 120_000);
+
   it("records owners, backfills them on upgrade, and hides restricted artifacts from other readers", async () => {
     const ownerDirectory = await mkdtemp(
       join(tmpdir(), "artifact-server-cloudflare-owner-"),

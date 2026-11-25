@@ -79,6 +79,7 @@ import {
 } from "../core/model.js";
 import type {
   AgentDispatchRepository,
+  ArtifactAccessSettingChange,
   ArtifactRepository,
   CancelAgentDispatch,
   ChangeArtifactAccessSetting,
@@ -1590,7 +1591,7 @@ export class SqliteArtifactRepository implements
 
   changeAccessSetting(
     command: ChangeArtifactAccessSetting,
-  ): Promise<ArtifactState> {
+  ): Promise<ArtifactAccessSettingChange> {
     return Promise.resolve().then(() =>
       this.#transaction(() => {
         const replayed = this.#findIdempotentManagementResult(
@@ -1599,7 +1600,7 @@ export class SqliteArtifactRepository implements
           command.idempotencyKey,
           command.inputDigest,
         );
-        if (replayed !== null) return replayed;
+        if (replayed !== null) return {...replayed, previousAccessSetting: null};
         const artifact = this.#readArtifact(command.projectId, command.artifactId);
         this.#assertExpectedCurrentVersion(
           artifact,
@@ -1645,13 +1646,17 @@ export class SqliteArtifactRepository implements
           "change_access",
           command.accessSetting,
         );
-        return this.#readArtifactState(
-          command.projectId,
-          command.artifactId,
-          command.expectedCurrentVersionId,
-          command.accessSetting,
-          false,
-        );
+        // Read inside this transaction, so it is the setting this change replaced.
+        return {
+          ...this.#readArtifactState(
+            command.projectId,
+            command.artifactId,
+            command.expectedCurrentVersionId,
+            command.accessSetting,
+            false,
+          ),
+          previousAccessSetting: artifact.accessSetting,
+        };
       }),
     );
   }

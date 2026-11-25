@@ -2189,11 +2189,16 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
         principalId: owner,
         projectId,
       } as const;
-      expect((await repository.changeAccessSetting(restrict)).artifact.accessSetting)
-        .toBe("restricted");
+      // The replaced setting is read inside the change's transaction; a replay
+      // replaced nothing.
+      expect(await repository.changeAccessSetting(restrict)).toMatchObject({
+        artifact: {accessSetting: "restricted"},
+        previousAccessSetting: "public_link",
+      });
       const replayed = await repository.changeAccessSetting(restrict);
       expect(replayed).toMatchObject({
         artifact: {accessSetting: "restricted"},
+        previousAccessSetting: null,
         replayed: true,
       });
 

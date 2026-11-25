@@ -82,6 +82,7 @@ import {
 } from "../../../src/core/model.js";
 import type {
   AgentDispatchRepository,
+  ArtifactAccessSettingChange,
   ArtifactRepository,
   CancelAgentDispatch,
   ChangeArtifactAccessSetting,
@@ -170,6 +171,9 @@ const actionSchema = z.enum([
   artifactActionKinds.publish,
   artifactActionKinds.restore,
 ]);
+const previousAccessSettingRowSchema = z.object({
+  accessSetting: accessSettingSchema,
+});
 const stagedUploadGrantRowSchema = z.object({
   grantDigest: z.string().nullable(),
   principalId: z.string(),
@@ -1119,7 +1123,12 @@ export function createD1ArtifactRepository(
       tags,
     );
   };
-  const applyManagementMutation = async (
+  /**
+   * Run one management batch, which D1 applies as a single transaction. The
+   * statement at `mutationIndex` must change exactly one artifact row; any
+   * statements before it are reads that see the row as the batch found it.
+   */
+  const applyManagementMutation = async <Result extends ArtifactState>(
     command: {
       readonly idempotencyKey: string;
       readonly inputDigest: string;
@@ -1129,15 +1138,17 @@ export function createD1ArtifactRepository(
       typeof artifactActionKinds.changeTags |
       typeof artifactActionKinds.restore,
     statements: D1PreparedStatement[],
-    readState: () => Promise<ArtifactState>,
-  ): Promise<ArtifactState> => {
+    readState: (results: readonly D1Result[]) => Promise<Result>,
+    fromReplay: (replay: ArtifactState) => Result,
+    mutationIndex = 0,
+  ): Promise<Result> => {
     try {
       const results = await database.batch(statements);
-      if (results[0]?.meta.changes !== 1) throw changedDuringManagement();
-      return await readState();
+      if (results[mutationIndex]?.meta.changes !== 1) throw changedDuringManagement();
+      return await readState(results);
     } catch (cause) {
       const raced = await managementReplay(command, operation);
-      if (raced !== null) return raced;
+      if (raced !== null) return fromReplay(raced);
       if (cause instanceof Error && /constraint|unique/iu.test(cause.message)) {
         throw changedDuringManagement();
       }
@@ -2670,7 +2681,7 @@ export function createD1ArtifactRepository(
 
     changeAccessSetting: async (command: ChangeArtifactAccessSetting) => {
       const replay = await managementReplay(command, artifactActionKinds.changeAccess);
-      if (replay !== null) return replay;
+      if (replay !== null) return {...replay, previousAccessSetting: null};
       const artifact = await readArtifact(command.projectId, command.artifactId);
       assertCurrent(artifact, command.expectedCurrentVersionId);
       const stored = storedAccessSetting(command.accessSetting);
@@ -2687,7 +2698,13 @@ export function createD1ArtifactRepository(
           artifact.ownerPrincipalId,
         ))
         : [];
-      return applyManagementMutation(command, artifactActionKinds.changeAccess, [
+      return applyManagementMutation<ArtifactAccessSettingChange>(command, artifactActionKinds.changeAccess, [
+        // Read inside the batch, so it is the setting this change replaces even
+        // when another change committed after the read above.
+        database.prepare(`
+          SELECT ${accessSettingSql()} AS accessSetting FROM artifacts
+          WHERE project_id = ? AND id = ?
+        `).bind(command.projectId, command.artifactId),
         database.prepare(`
           UPDATE artifacts SET access_setting = ?, restricted = ?
           WHERE project_id = ? AND id = ? AND current_version_id = ? AND deleted_at IS NULL
@@ -2713,13 +2730,17 @@ export function createD1ArtifactRepository(
           "a.deleted_at IS NULL AND a.access_setting = ? AND a.restricted = ?",
           [stored.accessSetting, stored.restricted ? 1 : 0],
         ),
-      ], () => artifactState(
+      ], async (results) => ({
+        ...await artifactState(
           command.projectId,
           command.artifactId,
           command.expectedCurrentVersionId,
           false,
           command.accessSetting,
-        ));
+        ),
+        previousAccessSetting: previousAccessSettingRowSchema
+          .parse(results[0]?.results[0]).accessSetting,
+      }), (raced) => ({...raced, previousAccessSetting: null}), 1);
     },
     changeTags: async (command: ChangeArtifactTags) => {
       const replay = await managementReplay(command, artifactActionKinds.changeTags);
@@ -2760,7 +2781,7 @@ export function createD1ArtifactRepository(
           false,
           artifact.accessSetting,
           command.tags,
-        ));
+        ), (raced) => raced);
     },
     restoreVersion: async (command: RestoreArtifactVersion) => {
       const replay = await managementReplay(command, artifactActionKinds.restore);
@@ -2799,7 +2820,7 @@ export function createD1ArtifactRepository(
           command.versionId,
           false,
           artifact.accessSetting,
-        ));
+        ), (raced) => raced);
     },
     deleteArtifact: async (command: DeleteArtifact) => {
       const existingRecord = await readIdempotency(command.projectId, command.idempotencyKey);

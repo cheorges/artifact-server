@@ -70,6 +70,7 @@ import {
 } from "../core/model.js";
 import type {
   AgentDispatchRepository,
+  ArtifactAccessSettingChange,
   ArtifactRepository,
   CancelAgentDispatch,
   ChangeArtifactAccessSetting,
@@ -1426,7 +1427,7 @@ export class PostgresArtifactRepository implements
 
   async changeAccessSetting(
     command: ChangeArtifactAccessSetting,
-  ): Promise<ArtifactState> {
+  ): Promise<ArtifactAccessSettingChange> {
     return this.#managementTransaction(
       command,
       "change_access",
@@ -3359,7 +3360,7 @@ export class PostgresArtifactRepository implements
     accessSetting: ArtifactRecord["accessSetting"],
     tagsJson: string | null,
     mutate: (sql: SqlClient) => Effect.Effect<readonly object[], unknown>,
-  ): Promise<ArtifactState> {
+  ): Promise<ArtifactAccessSettingChange> {
     const installationId = this.#installationId;
     return this.#database.run(Effect.gen({self: this}, function*() {
       const sql = yield* SqlClient;
@@ -3376,7 +3377,7 @@ export class PostgresArtifactRepository implements
           command.idempotencyKey,
           command.inputDigest,
         );
-        if (replayed !== null) return replayed;
+        if (replayed !== null) return {...replayed, previousAccessSetting: null};
         const artifact = yield* this.#readArtifact(
           command.projectId,
           command.artifactId,
@@ -3401,13 +3402,16 @@ export class PostgresArtifactRepository implements
           tagsJson,
           versionId: command.expectedCurrentVersionId,
         });
-        return yield* this.#readArtifactState(
+        const state = yield* this.#readArtifactState(
           command.projectId,
           command.artifactId,
           command.expectedCurrentVersionId,
           accessSetting,
           false,
         );
+        // Read FOR UPDATE inside this transaction, so it is the setting this
+        // change replaced even when another change committed just before.
+        return {...state, previousAccessSetting: artifact.accessSetting};
       }));
     }));
   }

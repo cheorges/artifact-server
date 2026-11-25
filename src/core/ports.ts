@@ -159,6 +159,16 @@ export interface ChangeArtifactAccessSetting {
   readonly projectId: string;
 }
 
+/** The artifact after an access change and the setting that change replaced. */
+export interface ArtifactAccessSettingChange extends ArtifactState {
+  /**
+   * The access setting read inside the change's own transaction, so a change
+   * committed by someone else in between is never missed; null when the
+   * request replayed an earlier change and replaced nothing.
+   */
+  readonly previousAccessSetting: AccessSetting | null;
+}
+
 /** Values used to atomically replace one artifact's complete tag set. */
 export interface ChangeArtifactTags {
   readonly artifactId: string;
@@ -638,7 +648,9 @@ export interface ArtifactRepository {
   close(): void;
   commitNewArtifact(command: CommitNewArtifact): Promise<PublishedVersion>;
   commitVersion(command: CommitArtifactVersion): Promise<PublishedVersion>;
-  changeAccessSetting(command: ChangeArtifactAccessSetting): Promise<ArtifactState>;
+  changeAccessSetting(
+    command: ChangeArtifactAccessSetting,
+  ): Promise<ArtifactAccessSettingChange>;
   changeTags(command: ChangeArtifactTags): Promise<ArtifactState>;
   deleteArtifact(command: DeleteArtifact): Promise<ArtifactDeletion>;
   findArtifact(projectId: string, artifactId: string): Promise<ArtifactRecord | null>;
