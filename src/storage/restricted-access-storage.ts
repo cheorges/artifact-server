@@ -66,22 +66,48 @@ export function restrictedScopeSql(artifact: string): string {
     WHERE grant_row.artifact_id = ${artifact}.id
       AND grant_row.grantee_kind = 'email'
       AND grantee_member.status = 'active'
-      AND grantee_member.id = ?))`;
+      AND grantee_member.id = ?) OR ${groupGrantedSql(artifact)})`;
 }
 
 /**
+ * SQLite and D1 SQL that is true when one of the directory groups in the
+ * bound JSON array of ids is granted the artifact (decision 0034).
+ */
+export function groupGrantedSql(artifact: string): string {
+  return `EXISTS (
+    SELECT 1 FROM artifact_grants group_grant
+    WHERE group_grant.artifact_id = ${artifact}.id
+      AND group_grant.grantee_kind = 'group'
+      AND group_grant.grantee IN (SELECT value FROM json_each(?)))`;
+}
+
+/** The activity kinds that name who an artifact is shared with (AUTH-039, AUTH-040). */
+export const sharingActionKindsSql =
+  "'grant_add', 'grant_remove', 'grant_group_add', 'grant_group_remove'";
+
+/**
  * SQLite and D1 SQL that keeps only restricted artifacts granted to a member
- * who does not own them, or every artifact when the bound member is null.
- * Bind the member id three times.
+ * who does not own them, by address or through one of the member's directory
+ * groups, or every artifact when the bound member is null. Bind the member
+ * id three times, then the JSON array of group ids:
+ * {@link sharedWithMemberParameters}.
  */
 export function sharedWithMemberSql(artifact: string): string {
-  return `(? IS NULL OR (${artifact}.restricted = 1 AND ${artifact}.owner_principal_id IS NOT ? AND EXISTS (
+  return `(? IS NULL OR (${artifact}.restricted = 1 AND ${artifact}.owner_principal_id IS NOT ? AND (EXISTS (
     SELECT 1 FROM artifact_grants shared_grant
     JOIN installation_members shared_member ON shared_member.email = shared_grant.grantee
     WHERE shared_grant.artifact_id = ${artifact}.id
       AND shared_grant.grantee_kind = 'email'
       AND shared_member.status = 'active'
-      AND shared_member.id = ?)))`;
+      AND shared_member.id = ?) OR ${groupGrantedSql(artifact)})))`;
+}
+
+/** Bind values for {@link sharedWithMemberSql}. */
+export function sharedWithMemberParameters(
+  memberId: string | null,
+  groupIds: readonly string[],
+): readonly [string | null, string | null, string | null, string] {
+  return [memberId, memberId, memberId, JSON.stringify(memberId === null ? [] : groupIds)];
 }
 
 /**
@@ -102,12 +128,17 @@ export function postgresGrantedToMemberSql(artifact: string, memberPlaceholder: 
       AND grantee_member.id = ${memberPlaceholder}::text)`;
 }
 
-/** Bind values for {@link restrictedScopeSql}: all flag, owner id, grantee id. */
+/**
+ * Bind values for {@link restrictedScopeSql}: all flag, owner id, grantee
+ * id, and the JSON array of the reader's directory group ids.
+ */
 export function restrictedScopeParameters(
   scope: RestrictedArtifactScope,
-): readonly [number, string | null, string | null] {
-  if (scope.kind === "all") return [1, null, null];
-  if (scope.kind === "owned") return [0, scope.principalId, null];
-  if (scope.kind === "owned_or_granted") return [0, scope.principalId, scope.principalId];
-  return [0, null, null];
+): readonly [number, string | null, string | null, string] {
+  if (scope.kind === "all") return [1, null, null, "[]"];
+  if (scope.kind === "owned") return [0, scope.principalId, null, "[]"];
+  if (scope.kind === "owned_or_granted") {
+    return [0, scope.principalId, scope.principalId, JSON.stringify(scope.groupIds)];
+  }
+  return [0, null, null, "[]"];
 }

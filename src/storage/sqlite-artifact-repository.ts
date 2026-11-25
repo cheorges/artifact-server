@@ -161,9 +161,12 @@ import {
   accessSettingSql,
   artifactGrantRowSchema,
   grantLimitMessage,
+  groupGrantedSql,
   restrictedScopeParameters,
   restrictedScopeSql,
+  sharedWithMemberParameters,
   sharedWithMemberSql,
+  sharingActionKindsSql,
   storedAccessSetting,
 } from "./restricted-access-storage.js";
 import {
@@ -197,6 +200,8 @@ const artifactActionKindSchema = z.enum([
   artifactActionKinds.commentUpdate,
   artifactActionKinds.delete,
   artifactActionKinds.grantAdd,
+  artifactActionKinds.grantGroupAdd,
+  artifactActionKinds.grantGroupRemove,
   artifactActionKinds.grantRemove,
   artifactActionKinds.link,
   artifactActionKinds.publish,
@@ -273,6 +278,21 @@ const artifactActionRowSchema = z.object({
   versionId: z.string(),
 });
 const grantCountRowSchema = z.object({count: z.number().int().nonnegative()});
+const removedGroupRowSchema = z.object({displayName: z.string()});
+
+/** The grant table as schema 17 creates it, under the given table name. */
+function artifactGrantsTableSql(name: "artifact_grants" | "artifact_grants_next"): string {
+  return `
+      CREATE TABLE IF NOT EXISTS ${name} (
+        artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+        grantee_kind TEXT NOT NULL CHECK (grantee_kind IN ('email', 'group')),
+        grantee TEXT NOT NULL,
+        granted_by_principal_id TEXT NOT NULL,
+        granted_at TEXT NOT NULL,
+        display_name TEXT,
+        PRIMARY KEY (artifact_id, grantee_kind, grantee)
+      ) STRICT;`;
+}
 /** A live artifact a grant change applies to: its setting and current version. */
 interface LiveGrantTarget {
   readonly currentVersionId: string;
@@ -1698,19 +1718,22 @@ export class SqliteArtifactRepository implements
     projectId: string,
     artifactId: string,
     principalId: string,
+    groupIds: readonly string[],
   ): Promise<boolean> {
     return Promise.resolve().then(() =>
       this.#database
         .prepare(
           `SELECT 1 AS granted FROM artifacts
-           JOIN artifact_grants grant_row
-             ON grant_row.artifact_id = artifacts.id AND grant_row.grantee_kind = 'email'
-           JOIN installation_members member ON member.email = grant_row.grantee
            WHERE artifacts.project_id = ? AND artifacts.id = ? AND artifacts.deleted_at IS NULL
-             AND member.id = ? AND member.status = 'active'
+             AND (EXISTS (
+               SELECT 1 FROM artifact_grants grant_row
+               JOIN installation_members member ON member.email = grant_row.grantee
+               WHERE grant_row.artifact_id = artifacts.id AND grant_row.grantee_kind = 'email'
+                 AND member.id = ? AND member.status = 'active'
+             ) OR ${groupGrantedSql("artifacts")})
            LIMIT 1`,
         )
-        .get(projectId, artifactId, principalId) !== undefined
+        .get(projectId, artifactId, principalId, JSON.stringify(groupIds)) !== undefined
     );
   }
 
@@ -1744,6 +1767,44 @@ export class SqliteArtifactRepository implements
           if (restricted) {
             this.#revokeContentAccessOfEmail(command.projectId, command.artifactId, email);
           }
+        }
+        const insertGroup = this.#database.prepare(
+          `INSERT INTO artifact_grants
+             (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at, display_name)
+           VALUES (?, 'group', ?, ?, ?, ?)
+           ON CONFLICT DO NOTHING`,
+        );
+        for (const group of command.addGroups) {
+          const added = insertGroup.run(
+            command.artifactId, group.id, command.principalId, command.changedAt, group.displayName,
+          );
+          if (Number(added.changes) === 1) {
+            this.#insertSharingAction(
+              command, currentVersionId, artifactActionKinds.grantGroupAdd, group.displayName,
+            );
+          }
+        }
+        const removeGroup = this.#database.prepare(
+          `DELETE FROM artifact_grants
+           WHERE artifact_id = ? AND grantee_kind = 'group' AND grantee = ?
+           RETURNING display_name AS displayName`,
+        );
+        let groupRemoved = false;
+        for (const groupId of command.removeGroups) {
+          const removed = removedGroupRowSchema.optional().parse(removeGroup.get(command.artifactId, groupId));
+          if (removed !== undefined) {
+            groupRemoved = true;
+            this.#insertSharingAction(
+              command, currentVersionId, artifactActionKinds.grantGroupRemove, removed.displayName,
+            );
+          }
+        }
+        if (groupRemoved && restricted) {
+          // Nobody knows who was in the group, so everyone but the owner and
+          // the people granted by address opens the artifact again.
+          this.#revokeContentAccessExceptAllowed(
+            this.#readArtifact(command.projectId, command.artifactId),
+          );
         }
         const {count} = grantCountRowSchema.parse(
           this.#database
@@ -2035,9 +2096,7 @@ export class SqliteArtifactRepository implements
         .all(
           command.projectId,
           ...restrictedScopeParameters(command.restrictedScope),
-          command.sharedWithPrincipalId,
-          command.sharedWithPrincipalId,
-          command.sharedWithPrincipalId,
+          ...sharedWithMemberParameters(command.sharedWithPrincipalId, command.sharedWithGroupIds),
           command.ownerPrincipalId,
           command.ownerPrincipalId,
           command.search ?? null,
@@ -2141,7 +2200,7 @@ export class SqliteArtifactRepository implements
             grantee
            FROM actions
            WHERE project_id = ? AND artifact_id = ?
-             AND (? = 1 OR action NOT IN ('grant_add', 'grant_remove'))
+             AND (? = 1 OR action NOT IN (${sharingActionKindsSql}))
              AND (
                ? IS NULL
                OR created_at < ?
@@ -5135,14 +5194,15 @@ export class SqliteArtifactRepository implements
     }
   }
 
-  /** The grants of one artifact, ordered by address. */
+  /** The grants of one artifact: people by address, then groups by name. */
   #grantRows(artifactId: string): readonly ArtifactGrant[] {
     return z.array(artifactGrantRowSchema).parse(
       this.#database
         .prepare(
           `SELECT grantee, grantee_kind AS kind, granted_at AS grantedAt,
-                  granted_by_principal_id AS grantedByPrincipalId
-           FROM artifact_grants WHERE artifact_id = ? ORDER BY grantee`,
+                  granted_by_principal_id AS grantedByPrincipalId, display_name AS displayName
+           FROM artifact_grants WHERE artifact_id = ?
+           ORDER BY grantee_kind, coalesce(display_name, grantee), grantee`,
         )
         .all(artifactId),
     );
@@ -5167,11 +5227,15 @@ export class SqliteArtifactRepository implements
     return {currentVersionId: row.currentVersionId, restricted: row.restricted === 1};
   }
 
-  /** One activity row naming the address a grant change added or removed (AUTH-039). */
+  /** One activity row naming the address or group a grant change added or removed (AUTH-039, AUTH-040). */
   #insertSharingAction(
     command: ChangeArtifactGrants,
     versionId: string,
-    action: typeof artifactActionKinds.grantAdd | typeof artifactActionKinds.grantRemove,
+    action:
+      | typeof artifactActionKinds.grantAdd
+      | typeof artifactActionKinds.grantGroupAdd
+      | typeof artifactActionKinds.grantGroupRemove
+      | typeof artifactActionKinds.grantRemove,
     grantee: string,
   ): void {
     this.#insertAction(
@@ -5188,20 +5252,33 @@ export class SqliteArtifactRepository implements
     );
   }
 
-  /** Add the grant table of restricted artifacts (schema 15). */
+  /**
+   * Add the grant table of restricted artifacts (schema 15), or widen an
+   * older one to directory groups and their stored names (schema 17). SQLite
+   * cannot alter a CHECK, so the older table is rebuilt with every row kept.
+   */
   #addArtifactGrantsIfMissing(): void {
-    this.#database.exec(`
-      CREATE TABLE IF NOT EXISTS artifact_grants (
-        artifact_id TEXT NOT NULL REFERENCES artifacts(id),
-        grantee_kind TEXT NOT NULL CHECK (grantee_kind IN ('email')),
-        grantee TEXT NOT NULL,
-        granted_by_principal_id TEXT NOT NULL,
-        granted_at TEXT NOT NULL,
-        PRIMARY KEY (artifact_id, grantee_kind, grantee)
-      ) STRICT;
+    const index = `
       CREATE INDEX IF NOT EXISTS artifact_grants_grantee
-        ON artifact_grants (grantee_kind, grantee, artifact_id);
-    `);
+        ON artifact_grants (grantee_kind, grantee, artifact_id);`;
+    const columns = this.#tableColumns("artifact_grants");
+    if (columns.length === 0 || columns.includes("display_name")) {
+      this.#database.exec(`${artifactGrantsTableSql("artifact_grants")}${index}`);
+      return;
+    }
+    this.#transaction(() => {
+      this.#database.exec(`
+        DROP TABLE IF EXISTS artifact_grants_next;
+        ${artifactGrantsTableSql("artifact_grants_next")}
+        INSERT INTO artifact_grants_next
+          (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
+        SELECT artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at
+        FROM artifact_grants;
+        DROP TABLE artifact_grants;
+        ALTER TABLE artifact_grants_next RENAME TO artifact_grants;
+        ${index}
+      `);
+    });
   }
 
   /** Record artifact owners and the restricted flag, backfilling owners from version 1. */
@@ -5789,6 +5866,7 @@ export class SqliteArtifactRepository implements
   #tableColumns(
     table:
       | "actions"
+      | "artifact_grants"
       | "artifacts"
       | "comment_threads"
       | "content_bootstraps"

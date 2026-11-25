@@ -45,6 +45,7 @@ import {
   restrictedScopeParameters,
   restrictedScopeSql,
   sharedWithMemberSql,
+  sharingActionKindsSql,
   storedAccessSetting,
 } from "../../../src/storage/restricted-access-storage.js";
 import {
@@ -180,6 +181,8 @@ const actionSchema = z.enum([
   artifactActionKinds.commentUpdate,
   artifactActionKinds.delete,
   artifactActionKinds.grantAdd,
+  artifactActionKinds.grantGroupAdd,
+  artifactActionKinds.grantGroupRemove,
   artifactActionKinds.grantRemove,
   artifactActionKinds.publish,
   artifactActionKinds.restore,
@@ -2644,7 +2647,7 @@ export function createD1ArtifactRepository(
           authorized_by_principal_id AS authorizedByPrincipalId,
           idempotency_key AS idempotencyKey, created_at AS createdAt, grantee
         FROM actions WHERE project_id = ? AND artifact_id = ?
-          AND (? = 1 OR action NOT IN ('grant_add', 'grant_remove'))
+          AND (? = 1 OR action NOT IN (${sharingActionKindsSql}))
           AND (? IS NULL OR created_at < ? OR (created_at = ? AND id < ?))
         ORDER BY created_at DESC, id DESC LIMIT ?
       `).bind(

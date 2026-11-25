@@ -145,6 +145,7 @@ import {
   grantLimitMessage,
   postgresGrantedToMemberSql,
   restrictedScopeParameters,
+  sharingActionKindsSql,
   storedAccessSetting,
 } from "./restricted-access-storage.js";
 import {
@@ -185,6 +186,8 @@ const artifactActionKindSchema = z.enum([
   artifactActionKinds.commentUpdate,
   artifactActionKinds.delete,
   artifactActionKinds.grantAdd,
+  artifactActionKinds.grantGroupAdd,
+  artifactActionKinds.grantGroupRemove,
   artifactActionKinds.grantRemove,
   artifactActionKinds.publish,
   artifactActionKinds.restore,
@@ -2067,7 +2070,7 @@ export class PostgresArtifactRepository implements
          WHERE installation_id = $1 AND project_id = $2 AND artifact_id = $3
            AND ($4::text IS NULL OR created_at < $4
              OR (created_at = $4 AND id < $5))
-           AND ($7::boolean OR action NOT IN ('grant_add', 'grant_remove'))
+           AND ($7::boolean OR action NOT IN (${sharingActionKindsSql}))
          ORDER BY created_at DESC, id DESC
          LIMIT $6`,
         [

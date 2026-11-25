@@ -126,6 +126,10 @@ function listCommand(
   };
 }
 
+function benScope(groupIds: readonly string[]): RestrictedArtifactScope {
+  return {groupIds, kind: "owned_or_granted", principalId: "member_ben"};
+}
+
 describe("SQLite artifact grants", () => {
   let dataDirectory: string;
   let databasePath: string;
@@ -188,14 +192,16 @@ describe("SQLite artifact grants", () => {
     await rm(dataDirectory, {force: true, recursive: true});
   });
 
-  test("AUTH-038 foundation: the current schema holds a grant table that names email grantees only", () => {
+  test("AUTH-038 foundation: the current schema holds a grant table that names people and groups only", () => {
     expect(schemaVersion(database)).toBe(requiredSqliteSchemaVersion);
     const columns = columnRowsSchema.parse(database.prepare("PRAGMA table_info(artifact_grants)").all())
       .map(({name}) => name);
-    expect(columns).toStrictEqual(["artifact_id", "grantee_kind", "grantee", "granted_by_principal_id", "granted_at"]);
+    expect(columns).toStrictEqual([
+      "artifact_id", "grantee_kind", "grantee", "granted_by_principal_id", "granted_at", "display_name",
+    ]);
     expect(() => database.prepare(
       `INSERT INTO artifact_grants (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
-       VALUES ('a', 'group', 'g', 'p', 't')`,
+       VALUES ('a', 'team', 'g', 'p', 't')`,
     ).run()).toThrow(/CHECK/u);
   });
 
@@ -205,7 +211,7 @@ describe("SQLite artifact grants", () => {
     const reopened = new SqliteArtifactRepository(databasePath);
     try {
       expect(schemaVersion(database)).toBe(requiredSqliteSchemaVersion);
-      expect(database.prepare("PRAGMA table_info(artifact_grants)").all()).toHaveLength(5);
+      expect(database.prepare("PRAGMA table_info(artifact_grants)").all()).toHaveLength(6);
     } finally {
       reopened.close();
     }
@@ -222,13 +228,13 @@ describe("SQLite artifact grants", () => {
       active: true,
       grants: [{displayName: null, grantedAt: changedAt, grantedByPrincipalId: "member_owner", grantee: anna, kind: "email"}],
     });
-    expect(await repository.isArtifactGrantee(artifact.projectId, artifact.artifactId, "member_anna")).toBe(true);
-    expect(await repository.isArtifactGrantee(artifact.projectId, artifact.artifactId, "member_ben")).toBe(false);
+    expect(await repository.isArtifactGrantee(artifact.projectId, artifact.artifactId, "member_anna", [])).toBe(true);
+    expect(await repository.isArtifactGrantee(artifact.projectId, artifact.artifactId, "member_ben", [])).toBe(false);
 
     database.prepare("UPDATE installation_members SET email = 'anna@elsewhere.example' WHERE id = 'member_anna'").run();
-    expect(await repository.isArtifactGrantee(artifact.projectId, artifact.artifactId, "member_anna")).toBe(false);
+    expect(await repository.isArtifactGrantee(artifact.projectId, artifact.artifactId, "member_anna", [])).toBe(false);
     database.prepare("UPDATE installation_members SET email = ?, status = 'inactive' WHERE id = 'member_anna'").run(anna);
-    expect(await repository.isArtifactGrantee(artifact.projectId, artifact.artifactId, "member_anna")).toBe(false);
+    expect(await repository.isArtifactGrantee(artifact.projectId, artifact.artifactId, "member_anna", [])).toBe(false);
   });
 
   test("AUTH-038 foundation: adding twice is a no-op and the list reports whether it applies", async () => {
@@ -379,7 +385,7 @@ describe("SQLite artifact grants", () => {
     const reopened = new SqliteArtifactRepository(databasePath);
     try {
       expect(schemaVersion(database)).toBe(requiredSqliteSchemaVersion);
-      expect(requiredSqliteSchemaVersion).toBe(16);
+      expect(requiredSqliteSchemaVersion).toBe(17);
       expect(columns()).toContain("grantee");
     } finally {
       reopened.close();
@@ -488,5 +494,151 @@ describe("SQLite artifact grants", () => {
     await change(open, [anna], []);
     expect(sharingRows(open.artifactId).map(({action, grantee}) => ({action, grantee})))
       .toStrictEqual([{action: "grant_add", grantee: anna}]);
+  });
+
+  const dep = {displayName: "Developer Productivity", id: "g-dep"};
+  const guild = {displayName: "Architecture Guild", id: "g-guild"};
+  const changeGroups = (
+    target: PublishedFixture,
+    addGroups: readonly {displayName: string; id: string}[],
+    removeGroups: readonly string[],
+    add: readonly string[] = [],
+  ) => repository.changeArtifactGrants({
+    add,
+    addGroups,
+    artifactId: target.artifactId,
+    authorizedByPrincipalId: null,
+    changedAt,
+    principalId: "member_owner",
+    projectId: target.projectId,
+    remove: [],
+    removeGroups,
+  });
+  const groupRows = (artifactId: string) => sharingRowsSchema.parse(database.prepare(
+    `SELECT action, authorized_by_principal_id AS authorizedByPrincipalId, grantee,
+            idempotency_key AS idempotencyKey, principal_id AS principalId, version_id AS versionId
+     FROM actions WHERE artifact_id = ? AND action IN ('grant_group_add', 'grant_group_remove')
+     ORDER BY action, grantee`,
+  ).all(artifactId)).map(({action, grantee}) => ({action, grantee}));
+
+  test("AUTH-040 foundation: a schema 16 database keeps its grants and accepts groups after the upgrade", async () => {
+    const artifact = await publishRestricted("Upgrade target", "member_owner");
+    database.exec(`
+      DROP TABLE artifact_grants;
+      CREATE TABLE artifact_grants (
+        artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+        grantee_kind TEXT NOT NULL CHECK (grantee_kind IN ('email')),
+        grantee TEXT NOT NULL,
+        granted_by_principal_id TEXT NOT NULL,
+        granted_at TEXT NOT NULL,
+        PRIMARY KEY (artifact_id, grantee_kind, grantee)
+      ) STRICT;
+      PRAGMA user_version = 16;
+    `);
+    database.prepare(
+      `INSERT INTO artifact_grants (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
+       VALUES (?, 'email', ?, 'member_owner', ?)`,
+    ).run(artifact.artifactId, anna, changedAt);
+    const reopened = new SqliteArtifactRepository(databasePath);
+    try {
+      expect(schemaVersion(database)).toBe(17);
+      expect(await reopened.isArtifactGrantee(artifact.projectId, artifact.artifactId, "member_anna", [])).toBe(true);
+      const list = await reopened.changeArtifactGrants({
+        add: [], addGroups: [dep], artifactId: artifact.artifactId, authorizedByPrincipalId: null, changedAt,
+        principalId: "member_owner", projectId: artifact.projectId, remove: [], removeGroups: [],
+      });
+      expect(list.grants).toStrictEqual([
+        {displayName: null, grantedAt: changedAt, grantedByPrincipalId: "member_owner", grantee: anna, kind: "email"},
+        {displayName: dep.displayName, grantedAt: changedAt, grantedByPrincipalId: "member_owner", grantee: dep.id, kind: "group"},
+      ]);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  test("AUTH-040 foundation: a group grant gives its members the artifact and the shared list", async () => {
+    const artifact = await publishRestricted("Shared with the team", "member_owner");
+    await publishRestricted("Ben's own", "member_ben");
+    await changeGroups(artifact, [dep, guild], []);
+    const granted = (groupIds: readonly string[]) =>
+      repository.isArtifactGrantee(artifact.projectId, artifact.artifactId, "member_ben", groupIds);
+    expect(await granted(["g-dep"])).toBe(true);
+    expect(await granted(["g-other", "g-guild"])).toBe(true);
+    expect(await granted([])).toBe(false);
+    expect(await granted(["g-other"])).toBe(false);
+
+    const names = async (command: ListArtifacts) =>
+      (await repository.listArtifacts(command)).items.map(({name}) => name).toSorted();
+    expect(await names(listCommand(artifact.projectId, benScope(["g-dep"]))))
+      .toStrictEqual(["Ben's own", "Shared with the team"]);
+    expect(await names(listCommand(artifact.projectId, benScope([])))).toStrictEqual(["Ben's own"]);
+    expect(await names({...listCommand(artifact.projectId, benScope(["g-dep"]), "member_ben"), sharedWithGroupIds: ["g-dep"]}))
+      .toStrictEqual(["Shared with the team"]);
+    expect(await names({...listCommand(artifact.projectId, benScope(["g-dep"]), "member_ben"), sharedWithGroupIds: []}))
+      .toStrictEqual([]);
+    // The owner's own artifact is never "shared with" the owner, group or not.
+    expect(await names({
+      ...listCommand(artifact.projectId, {groupIds: ["g-dep"], kind: "owned_or_granted", principalId: "member_owner"}, "member_owner"),
+      sharedWithGroupIds: ["g-dep"],
+    })).toStrictEqual([]);
+  });
+
+  test("AUTH-040 foundation: only real group changes write a row, and only the owner's listing shows them", async () => {
+    const artifact = await publishRestricted("Group sharing rows", "member_owner");
+    await changeGroups(artifact, [dep], []);
+    await changeGroups(artifact, [dep], ["g-absent"]);
+    expect(groupRows(artifact.artifactId)).toStrictEqual([{action: "grant_group_add", grantee: dep.displayName}]);
+    await changeGroups(artifact, [], ["g-dep"]);
+    expect(groupRows(artifact.artifactId)).toStrictEqual([
+      {action: "grant_group_add", grantee: dep.displayName},
+      {action: "grant_group_remove", grantee: dep.displayName},
+    ]);
+    const kinds = async (includeGrantChanges: boolean) => (await repository.listArtifactActions({
+      artifactId: artifact.artifactId, cursor: null, includeGrantChanges, limit: 50, projectId: artifact.projectId,
+    })).items.map(({action}) => action);
+    expect(await kinds(true)).toStrictEqual(expect.arrayContaining(["grant_group_add", "grant_group_remove"]));
+    expect((await kinds(false)).filter((action) => action.startsWith("grant_"))).toStrictEqual([]);
+  });
+
+  test("AUTH-040 foundation: people and groups share the cap, and a refused change writes nothing", async () => {
+    const artifact = await publishRestricted("Cap target", "member_owner");
+    await changeGroups(artifact, [], [], Array.from({length: 99}, (_, index) => `person${index}@company.example`));
+    await expect(changeGroups(artifact, [dep, guild], [])).rejects.toBeInstanceOf(GrantLimitReached);
+    expect(groupRows(artifact.artifactId)).toStrictEqual([]);
+    expect((await repository.listArtifactGrants(artifact.projectId, artifact.artifactId)).grants).toHaveLength(99);
+    await changeGroups(artifact, [dep], []);
+    expect((await repository.listArtifactGrants(artifact.projectId, artifact.artifactId)).grants).toHaveLength(100);
+  });
+
+  test("AUTH-040 foundation: removing a group ends content access except the owner's and address grantees'", async () => {
+    const artifact = await publishRestricted("Group removal", "member_owner");
+    await changeGroups(artifact, [dep, guild], [], [anna]);
+    for (const principalId of ["member_owner", "member_anna", "member_ben"]) {
+      insertContentAccess(database, `token-${principalId}`, principalId, artifact);
+    }
+    // A change that removes nothing keeps every session.
+    await changeGroups(artifact, [], ["g-absent"]);
+    expect(contentAccessHolders(database, artifact.artifactId)).toHaveLength(6);
+    await changeGroups(artifact, [], ["g-dep"]);
+    expect(contentAccessHolders(database, artifact.artifactId)).toStrictEqual([
+      "member_anna", "member_anna", "member_owner", "member_owner",
+    ]);
+  });
+
+  test("AUTH-040 foundation: deleting the artifact removes its group grants", async () => {
+    const artifact = await publishRestricted("Deleted with groups", "member_owner");
+    await changeGroups(artifact, [dep], []);
+    await repository.deleteArtifact({
+      artifactId: artifact.artifactId,
+      authorizedByPrincipalId: null,
+      createdAt: changedAt,
+      expectedCurrentVersionId: artifact.versionId,
+      idempotencyKey: "grant-storage-delete-with-groups",
+      inputDigest: "b".repeat(64),
+      principalId: "member_owner",
+      projectId: artifact.projectId,
+    });
+    expect(database.prepare("SELECT count(*) AS count FROM artifact_grants WHERE artifact_id = ?").get(artifact.artifactId))
+      .toEqual({count: 0});
   });
 });
