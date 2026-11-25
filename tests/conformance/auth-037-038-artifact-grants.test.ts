@@ -1,6 +1,11 @@
 import path from "node:path";
 import {DatabaseSync} from "node:sqlite";
 
+import {
+  CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
+  PROTOCOL_VERSION_META_KEY,
+} from "@modelcontextprotocol/server";
 import {afterEach, beforeEach, describe, expect, test} from "vitest";
 import {z} from "zod";
 
@@ -13,6 +18,8 @@ import {
   startTestServer,
   type TestInstallation,
 } from "../support/runtime-harness.js";
+
+const protocolVersion = "2026-07-28";
 
 const allCapabilities = [
   "agent:connect",
@@ -53,6 +60,22 @@ const grantListSchema = z.object({
     kind: z.literal("email"),
   })),
 });
+
+const toolResultSchema = z.object({
+  result: z.object({
+    content: z.array(z.object({text: z.string(), type: z.literal("text")})),
+    isError: z.boolean().optional(),
+    structuredContent: z.unknown().optional(),
+  }).loose(),
+});
+const mcpListSchema = z.object({artifacts: z.array(z.object({name: z.string()}))});
+const mcpGetSchema = z.object({
+  artifact: z.object({accessSetting: z.string(), name: z.string()}),
+  grants: grantListSchema.nullable(),
+});
+
+/** Tool arguments these tests send: strings, string lists, and nulls. */
+type McpArguments = Readonly<Record<string, string | readonly string[] | null>>;
 
 interface ApplicationCookies {
   readonly csrf: string;
@@ -138,6 +161,12 @@ describe("grants to persons on restricted artifacts", () => {
 
     expect(await listedNames(ben, undefined, "shared_with_me")).toStrictEqual(["Ada's plan"]);
     expect(await listedNames(ada, undefined, "shared_with_me")).toStrictEqual([]);
+    const listedOverMcp = mcpListSchema.parse(await callTool(ben, "artifact_list", {scope: "shared_with_me"}));
+    expect(listedOverMcp.artifacts.map(({name}) => name)).toStrictEqual(["Ada's plan"]);
+    const readOverMcp = mcpGetSchema.parse(await callTool(ben, "artifact_get", {artifactId: draft.id}));
+    expect(readOverMcp.artifact.accessSetting).toBe("restricted");
+    // A grantee never sees who else the artifact is shared with.
+    expect(readOverMcp.grants).toBeNull();
 
     // A grant for someone who is not a member yet applies once they are admitted.
     expect((await grant(ada, draft.id, ["dora@example.test"])).status).toBe(200);
@@ -175,6 +204,12 @@ describe("grants to persons on restricted artifacts", () => {
       request(ben, "GET", `${draft.id}/grants`),
     ]);
     expect(refusals.map(({status}) => status)).toStrictEqual(refusals.map(() => 403));
+    const refusedOverMcp = await callToolResult(ben, "artifact_set_grants", {
+      add: ["carl@example.test"],
+      artifactId: draft.id,
+    });
+    expect(refusedOverMcp.isError).toBe(true);
+    expect(refusedOverMcp.content[0]?.text).toContain("Only the owner or an administrator");
     await expect(publishVersion(server, as(ben), {
       artifactId: draft.id,
       content: "grantee version",
@@ -224,8 +259,21 @@ describe("grants to persons on restricted artifacts", () => {
     });
     expect((await grant(administratorActor(), draft.id, ["dora@example.test", "ben@example.test"])).status)
       .toBe(200);
+    const sharedOverMcp = grantListSchema.parse(await callTool(ada, "artifact_set_grants", {
+      add: ["erin@example.test"],
+      artifactId: draft.id,
+      remove: [],
+    }));
+    expect(sharedOverMcp.grants.map(({grantee}) => grantee))
+      .toStrictEqual(["ben@example.test", "dora@example.test", "erin@example.test"]);
+    expect(grantListSchema.parse(await callTool(ada, "artifact_set_grants", {
+      artifactId: draft.id,
+      remove: ["Erin@example.test"],
+    })).grants.map(({grantee}) => grantee)).toStrictEqual(["ben@example.test", "dora@example.test"]);
     const listed = grantListSchema.parse(await (await request(ada, "GET", `${draft.id}/grants`)).json());
     expect(listed.grants.map(({grantee}) => grantee)).toStrictEqual(["ben@example.test", "dora@example.test"]);
+    expect(mcpGetSchema.parse(await callTool(ada, "artifact_get", {artifactId: draft.id})).grants)
+      .toStrictEqual(listed);
     expect(grantListSchema.parse(await (await request(administratorActor(), "GET", `${draft.id}/grants`)).json()))
       .toStrictEqual(listed);
 
@@ -290,6 +338,44 @@ describe("grants to persons on restricted artifacts", () => {
     expect((await request(ben, "GET", draft.id)).status).toBe(missing.status);
     expect(await listedNames(ben, undefined, "shared_with_me")).toStrictEqual([]);
   });
+
+  async function callTool(actor: Actor, name: string, toolArguments: McpArguments) {
+    const result = await callToolResult(actor, name, toolArguments);
+    if (result.isError === true) {
+      throw new Error(`${name} failed: ${result.content[0]?.text ?? "no message"}`);
+    }
+    return result.structuredContent;
+  }
+
+  async function callToolResult(actor: Actor, name: string, toolArguments: McpArguments) {
+    const response = await fetch(`${server.baseUrl}/mcp`, {
+      body: JSON.stringify({
+        id: crypto.randomUUID(),
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          _meta: {
+            [CLIENT_CAPABILITIES_META_KEY]: {},
+            [CLIENT_INFO_META_KEY]: {name: "artifact-server-test", version: "1"},
+            [PROTOCOL_VERSION_META_KEY]: protocolVersion,
+          },
+          arguments: toolArguments,
+          name,
+        },
+      }),
+      headers: {
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${actor.token}`,
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": protocolVersion,
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": name,
+      },
+      method: "POST",
+    });
+    expect(response.status).toBe(200);
+    return toolResultSchema.parse(await response.json()).result;
+  }
 
   function grant(
     actor: Caller,

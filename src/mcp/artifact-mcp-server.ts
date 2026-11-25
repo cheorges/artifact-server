@@ -66,6 +66,7 @@ import {
   publicLinkPolicies,
   type PublicLinkPolicy,
 } from "../core/public-link-policy.js";
+import {mayChangeRestriction} from "../core/artifact-visibility.js";
 import {principalKinds, type Principal} from "../core/identity.js";
 import {
   gitHistoryProviders,
@@ -132,6 +133,17 @@ const declaredFileSchema = z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 }).strict();
+const artifactGrantSchema = z.object({
+  grantedAt: z.string(),
+  grantedByPrincipalId: z.string(),
+  grantee: z.string(),
+  kind: z.literal("email"),
+}).strict();
+const artifactGrantListSchema = z.object({
+  active: z.boolean(),
+  grants: z.array(artifactGrantSchema),
+}).strict();
+const grantAddressesSchema = z.array(z.string().max(320)).max(100).default([]);
 const artifactRecordSchema = z.object({
   accessSetting: accessSettingSchema,
   createdAt: z.string(),
@@ -864,12 +876,12 @@ export function createArtifactMcpServer(
     {
       title: "List artifacts",
       description:
-        "Find artifacts visible to the caller. Use scope mine for only the caller's own artifacts, tag for exact normalized-tag filtering, and nextCursor to continue a large result set. Each artifact names its owner.",
+        "Find artifacts visible to the caller. Use scope mine for only the caller's own artifacts, scope shared_with_me for restricted artifacts other people shared with the caller, tag for exact normalized-tag filtering, and nextCursor to continue a large result set. Each artifact names its owner.",
       inputSchema: z.object({
         cursor: z.string().max(1_024).nullable().default(null),
         limit: z.number().int().min(1).max(maximumListedArtifacts).default(50),
         projectId: optionalProjectIdSchema,
-        scope: z.enum(["all", "mine"]).default("all"),
+        scope: z.enum(["all", "mine", "shared_with_me"]).default("all"),
         tag: tagSchema.nullable().default(null),
       }).strict(),
       outputSchema: z.object({
@@ -927,7 +939,7 @@ export function createArtifactMcpServer(
     {
       title: "Get an artifact",
       description:
-        "Get one artifact with its current immutable version, complete canonical manifest, exact full-screen Review link, stable artifact link, sharing mode, and tags in one call.",
+        "Get one artifact with its current immutable version, complete canonical manifest, exact full-screen Review link, stable artifact link, sharing mode, and tags in one call. For its owner or an administrator it also lists the people it is shared with; for anyone else grants is null.",
       inputSchema: z.object({
         artifactId: artifactIdSchema,
         projectId: optionalProjectIdSchema,
@@ -942,6 +954,7 @@ export function createArtifactMcpServer(
           manifest: manifestProjectionSchema,
           version: versionRecordSchema,
         }).strict(),
+        grants: artifactGrantListSchema.nullable(),
         links: z.object({artifact: z.url()}).strict(),
         ownerDisplayName: z.string().nullable(),
       }).strict(),
@@ -958,6 +971,19 @@ export function createArtifactMcpServer(
           })
         ),
       );
+      // Who else may see the artifact is for its owner and administrators only.
+      const grants = mayChangeRestriction(identity.principal, details.artifact)
+        ? await runMcpApplicationEffect(
+          dependencies,
+          ArtifactManagementService.use((management) =>
+            management.getGrants({
+              artifactId: details.artifact.id,
+              principal: identity.principal,
+              projectId: details.artifact.projectId,
+            })
+          ),
+        )
+        : null;
       return {
         artifact: details.artifact,
         current: versionProjection(
@@ -966,6 +992,7 @@ export function createArtifactMcpServer(
           details.artifact.id,
           details.current,
         ),
+        grants: grants === null ? null : {active: grants.active, grants: [...grants.grants]},
         links: {
           artifact: artifactBrowserUrl(applicationUrl, details.artifact.id),
         },
@@ -1312,7 +1339,7 @@ export function createArtifactMcpServer(
     {
       title: "Change artifact visibility",
       description:
-        "Change who can see an artifact without changing its saved files: restricted (only its owner and administrators), account_required (every signed-in member), or public_link. Only the owner or an administrator can switch to or from restricted. Public copies already downloaded outside Artifact Server cannot be recalled.",
+        "Change who can see an artifact without changing its saved files: restricted (only its owner, administrators, and people it is shared with through artifact_set_grants), account_required (every signed-in member), or public_link. Only the owner or an administrator can switch to or from restricted. Public copies already downloaded outside Artifact Server cannot be recalled.",
       inputSchema: z.object({
         accessSetting: accessSettingSchema,
         artifactId: artifactIdSchema,
@@ -1349,6 +1376,38 @@ export function createArtifactMcpServer(
           ? "New public requests are blocked. Copies already downloaded or cached outside Artifact Server cannot be recalled."
           : null,
       };
+    }),
+  );
+
+  registerNudgedTool(
+    "artifact_set_grants",
+    {
+      title: "Share a restricted artifact with people",
+      description:
+        "Add or remove people, by exact email address, who may find, open, and comment on a restricted artifact. Only the owner or an administrator can change grants. Grants apply only while the artifact's access setting is restricted; call artifact_set_visibility with restricted to narrow access. People who are not members yet get access once they sign in with that email. Removing a person ends their access at once.",
+      inputSchema: z.object({
+        add: grantAddressesSchema,
+        artifactId: artifactIdSchema,
+        projectId: optionalProjectIdSchema,
+        remove: grantAddressesSchema,
+      }).strict(),
+      outputSchema: artifactGrantListSchema,
+      annotations: idempotentWriteAnnotations,
+    },
+    async (input) => toolResult(async () => {
+      const changed = await runMcpApplicationEffect(
+        dependencies,
+        ArtifactManagementService.use((management) =>
+          management.changeGrants({
+            add: input.add,
+            artifactId: input.artifactId,
+            principal: identity.principal,
+            projectId: input.projectId,
+            remove: input.remove,
+          })
+        ),
+      );
+      return {active: changed.active, grants: [...changed.grants]};
     }),
   );
 
