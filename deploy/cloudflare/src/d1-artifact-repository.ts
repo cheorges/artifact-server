@@ -2746,9 +2746,9 @@ export function createD1ArtifactRepository(
     },
 
     changeArtifactGrants: async (command: ChangeArtifactGrants): Promise<ArtifactGrantList> => {
-      // The Worker has no directory (decision 0034), so no caller can name a
-      // group here; the stored shape and the read paths are ready for one.
-      if (command.addGroups.length > 0 || command.removeGroups.length > 0) {
+      // The Worker has no directory (decision 0034), so no group can be added
+      // and none is ever stored; removing a group is the contract's no-op.
+      if (command.addGroups.length > 0) {
         throw new GroupSharingUnavailable({
           message: "This installation has no directory, so artifacts cannot be shared with groups.",
         });

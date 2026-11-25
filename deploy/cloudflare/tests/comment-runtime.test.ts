@@ -846,6 +846,15 @@ describe("Cloudflare D1 comments", () => {
       });
       expect(refused.status).toBe(409);
       expect(failureSchema.parse(await refused.json()).error.code).toBe("GROUP_SHARING_UNAVAILABLE");
+      // Removing a group needs no directory and, with none stored, changes nothing.
+      const removed = await asAda(`${artifactUrl}/grants`, {
+        body: JSON.stringify({removeGroups: [{displayName: "Developer Productivity", id: "11111111-1111-4111-8111-111111111111"}]}),
+        method: "PATCH",
+      });
+      expect(removed.status).toBe(200);
+      expect(z.object({grants: z.array(z.object({grantee: z.string()}))})
+        .parse(await removed.json()).grants.map(({grantee}) => grantee))
+        .toStrictEqual(["ben@example.test"]);
       expect((await asAda(`${origin}/api/v1/directory/groups?query=dev`)).status).toBe(409);
       const session = z.object({capabilities: z.object({groupSharing: z.boolean()})})
         .parse(await (await asAda(`${origin}/api/v1/session`)).json());
