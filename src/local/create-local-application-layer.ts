@@ -491,15 +491,12 @@ export function createApplicationLayer(
     clock,
     principalNames: {
       findDisplayNames: (installationId, principalIds) =>
-        Effect.tryPromise({
-          try: async () => new Map(
-            (await adapters.identityRepository.findPrincipalDisplayNames(
-              installationId,
-              principalIds,
-            )).map(({displayName, principalId}) => [principalId, displayName]),
-          ),
-          catch: (cause) => repositoryFailure("findPrincipalDisplayNames", cause),
-        }),
+        identityEffect("findPrincipalDisplayNames", async () => new Map(
+          (await adapters.identityRepository.findPrincipalDisplayNames(
+            installationId,
+            principalIds,
+          )).map(({displayName, principalId}) => [principalId, displayName]),
+        )),
     },
     publicLinks,
     repository: {

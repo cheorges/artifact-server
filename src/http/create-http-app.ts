@@ -43,11 +43,11 @@ import {
   type UpdateCommentThreadCommand,
 } from "../application/artifact-comments.js";
 import {
-  type ArtifactDetails,
-  type ArtifactVersionDetails,
+  type ArtifactActionPageWithActorNames,
+  type ArtifactDetailsWithOwnerName,
   ArtifactManagementService,
-  type NamedArtifactActionPage,
-  type NamedArtifactPage,
+  type ArtifactPageWithOwnerNames,
+  type ArtifactVersionDetails,
 } from "../application/artifact-management.js";
 import {
   type MakePublicLinkPrivateResult,
@@ -1631,7 +1631,7 @@ export function createHttpApp(
       context,
       dependencies,
       ArtifactManagementService.use((management) =>
-        management.listArtifacts({
+        management.listArtifactsWithOwnerNames({
           comments: query.comments,
           cursor: decodePageCursor(query.cursor),
           limit: query.limit,
@@ -1656,7 +1656,7 @@ export function createHttpApp(
       dependencies,
       Effect.gen(function*() {
         const management = yield* ArtifactManagementService;
-        const details = yield* management.getArtifact({
+        const details = yield* management.getArtifactWithOwnerName({
           artifactId: context.req.param("artifactId"),
           principal: context.get("principal"),
           projectId: requestedProjectId(context),
@@ -3003,7 +3003,7 @@ function linkedPublicationResponse(
 function artifactDetailsResponse(
   requestUrl: URL,
   contentDomain: string,
-  details: ArtifactDetails,
+  details: ArtifactDetailsWithOwnerName,
 ) {
   return {
     artifact: details.artifact,
@@ -3021,7 +3021,7 @@ function artifactDetailsResponse(
 
 function artifactPageResponse(
   requestUrl: URL,
-  page: NamedArtifactPage,
+  page: ArtifactPageWithOwnerNames,
 ) {
   return {
     artifacts: page.items.map(({
@@ -3309,7 +3309,7 @@ function updateCommentThreadCommand(
   return command;
 }
 
-function artifactActionPageResponse(page: NamedArtifactActionPage) {
+function artifactActionPageResponse(page: ArtifactActionPageWithActorNames) {
   return {
     actions: page.items,
     nextCursor: encodePageCursor(page.nextCursor),

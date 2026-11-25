@@ -449,21 +449,24 @@ export function createD1IdentityRepository(
     findPrincipalDisplayNames: async (installationId, principalIds) => {
       const ids = [...new Set(principalIds)];
       if (ids.length === 0) return [];
-      const placeholders = ids.map(() => "?").join(", ");
+      // One JSON parameter for every id: D1 binds at most 100 parameters per
+      // statement, and a page can name up to 100 principals.
+      const idsJson = JSON.stringify(ids);
       // Members first, then service keys oldest to newest, so the newest key's
       // name wins for a rotated service principal.
       const result = await database.prepare(`
         SELECT principalId, displayName FROM (
           SELECT id AS principalId, display_name AS displayName, 0 AS source, created_at AS createdAt
           FROM installation_members
-          WHERE installation_id = ? AND id IN (${placeholders})
+          WHERE installation_id = ? AND id IN (SELECT value FROM json_each(?))
           UNION ALL
           SELECT principal_id, name, 1, created_at
           FROM managed_api_keys
-          WHERE installation_id = ? AND principal_kind = 'service' AND principal_id IN (${placeholders})
+          WHERE installation_id = ? AND principal_kind = 'service'
+            AND principal_id IN (SELECT value FROM json_each(?))
         )
         ORDER BY source ASC, createdAt ASC
-      `).bind(installationId, ...ids, installationId, ...ids)
+      `).bind(installationId, idsJson, installationId, idsJson)
         .all<z.input<typeof principalNameRowSchema>>();
       const names = new Map<string, string>();
       for (const row of result.results) {

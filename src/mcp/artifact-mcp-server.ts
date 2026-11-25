@@ -893,7 +893,7 @@ export function createArtifactMcpServer(
       const page = await runMcpApplicationEffect(
         dependencies,
         ArtifactManagementService.use((management) =>
-          management.listArtifacts({
+          management.listArtifactsWithOwnerNames({
             cursor: decodePageCursor(cursor),
             limit,
             principal: identity.principal,
@@ -951,7 +951,7 @@ export function createArtifactMcpServer(
       const details = await runMcpApplicationEffect(
         dependencies,
         ArtifactManagementService.use((management) =>
-          management.getArtifact({
+          management.getArtifactWithOwnerName({
             artifactId,
             principal: identity.principal,
             projectId,

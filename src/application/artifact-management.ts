@@ -22,6 +22,7 @@ import {
   type ArtifactRepositoryFailure,
   AuthorizationDenied,
   type IdempotencyConflict,
+  type IdentityRepositoryFailure,
   type InvalidArtifactTags,
   type InvalidIdempotencyKey,
   InvalidPagination,
@@ -68,31 +69,35 @@ const maximumPageSize = 100;
 export interface ArtifactDetails {
   readonly artifact: ArtifactRecord;
   readonly current: ArtifactVersion;
+}
+
+/** Artifact details with the owner's shown name, for the surfaces that show it. */
+export interface ArtifactDetailsWithOwnerName extends ArtifactDetails {
   /** The owner's shown name, or null when the owner is unknown. */
   readonly ownerDisplayName: string | null;
 }
 
 /** One listed artifact with its owner's shown name. */
-export interface NamedArtifactListItem extends ArtifactListItem {
+export interface ArtifactListItemWithOwnerName extends ArtifactListItem {
   /** The owner's shown name, or null when the owner is unknown. */
   readonly ownerDisplayName: string | null;
 }
 
 /** One bounded page of listed artifacts with their owners' shown names. */
-export interface NamedArtifactPage {
-  readonly items: readonly NamedArtifactListItem[];
+export interface ArtifactPageWithOwnerNames {
+  readonly items: readonly ArtifactListItemWithOwnerName[];
   readonly nextCursor: PageCursor | null;
 }
 
 /** One recorded action with the shown name of the principal that took it. */
-export interface NamedArtifactAction extends ArtifactActionRecord {
+export interface ArtifactActionWithActorName extends ArtifactActionRecord {
   /** The actor's shown name, or null when the actor is unknown. */
   readonly actorDisplayName: string | null;
 }
 
 /** One bounded page of recorded actions with their actors' shown names. */
-export interface NamedArtifactActionPage {
-  readonly items: readonly NamedArtifactAction[];
+export interface ArtifactActionPageWithActorNames {
+  readonly items: readonly ArtifactActionWithActorName[];
   readonly nextCursor: PageCursor | null;
 }
 
@@ -246,7 +251,7 @@ export interface PrincipalNameDirectory {
   readonly findDisplayNames: (
     installationId: string,
     principalIds: readonly string[],
-  ) => Effect.Effect<ReadonlyMap<string, string>, ArtifactRepositoryFailure>;
+  ) => Effect.Effect<ReadonlyMap<string, string>, IdentityRepositoryFailure>;
 }
 
 /** Dependencies used to construct artifact management operations. */
@@ -269,6 +274,7 @@ export type ArtifactManagementFailure =
   | InvalidPagination
   | AuthorizationDenied
   | ArtifactRepositoryFailure
+  | IdentityRepositoryFailure
   | ProjectManagementFailure;
 
 interface ArtifactManagementOperations {
@@ -284,6 +290,10 @@ interface ArtifactManagementOperations {
   readonly getArtifact: (
     command: ReadArtifactCommand,
   ) => Effect.Effect<ArtifactDetails, ArtifactManagementFailure>;
+  /** `getArtifact` plus the owner's shown name, one more lookup. */
+  readonly getArtifactWithOwnerName: (
+    command: ReadArtifactCommand,
+  ) => Effect.Effect<ArtifactDetailsWithOwnerName, ArtifactManagementFailure>;
   readonly getVersion: (
     command: ReadArtifactVersionCommand,
   ) => Effect.Effect<ArtifactVersion, ArtifactManagementFailure>;
@@ -295,10 +305,14 @@ interface ArtifactManagementOperations {
   ) => Effect.Effect<readonly VersionRecord[], ArtifactManagementFailure>;
   readonly listArtifactActions: (
     command: ListArtifactActionsCommand,
-  ) => Effect.Effect<NamedArtifactActionPage, ArtifactManagementFailure>;
+  ) => Effect.Effect<ArtifactActionPageWithActorNames, ArtifactManagementFailure>;
   readonly listArtifacts: (
     command: ListArtifactsCommand,
-  ) => Effect.Effect<NamedArtifactPage, ArtifactManagementFailure>;
+  ) => Effect.Effect<ArtifactPage, ArtifactManagementFailure>;
+  /** `listArtifacts` plus each owner's shown name, one more lookup per page. */
+  readonly listArtifactsWithOwnerNames: (
+    command: ListArtifactsCommand,
+  ) => Effect.Effect<ArtifactPageWithOwnerNames, ArtifactManagementFailure>;
   readonly restoreVersion: (
     command: RestoreArtifactVersionCommand,
   ) => Effect.Effect<ArtifactState, ArtifactManagementFailure>;
@@ -430,10 +444,17 @@ function makeArtifactManagementService(
         artifact.id,
         artifact.currentVersionId,
       );
-      const names = yield* displayNames(command.principal, [artifact.ownerPrincipalId]);
-      return {artifact, current, ownerDisplayName: nameOf(names, artifact.ownerPrincipalId)};
+      return {artifact, current};
     },
   );
+
+  const getArtifactWithOwnerName = Effect.fn(
+    "ArtifactManagementService.getArtifactWithOwnerName",
+  )(function*(command: ReadArtifactCommand) {
+    const details = yield* getArtifact(command);
+    const names = yield* displayNames(command.principal, [details.artifact.ownerPrincipalId]);
+    return {...details, ownerDisplayName: nameOf(names, details.artifact.ownerPrincipalId)};
+  });
 
   const getVersionDetails = Effect.fn("ArtifactManagementService.getVersionDetails")(
     function*(command: ReadArtifactVersionCommand) {
@@ -515,7 +536,7 @@ function makeArtifactManagementService(
         command.principal,
         command.projectId,
       );
-      const page = yield* dependencies.repository.listArtifacts({
+      return yield* dependencies.repository.listArtifacts({
         comments,
         cursor: command.cursor,
         limit,
@@ -526,19 +547,25 @@ function makeArtifactManagementService(
         sort,
         tags,
       });
-      const names = yield* displayNames(
-        command.principal,
-        page.items.map((item) => item.ownerPrincipalId),
-      );
-      return {
-        items: page.items.map((item) => ({
-          ...item,
-          ownerDisplayName: nameOf(names, item.ownerPrincipalId),
-        })),
-        nextCursor: page.nextCursor,
-      };
     },
   );
+
+  const listArtifactsWithOwnerNames = Effect.fn(
+    "ArtifactManagementService.listArtifactsWithOwnerNames",
+  )(function*(command: ListArtifactsCommand) {
+    const page = yield* listArtifacts(command);
+    const names = yield* displayNames(
+      command.principal,
+      page.items.map((item) => item.ownerPrincipalId),
+    );
+    return {
+      items: page.items.map((item) => ({
+        ...item,
+        ownerDisplayName: nameOf(names, item.ownerPrincipalId),
+      })),
+      nextCursor: page.nextCursor,
+    };
+  });
 
   const listArtifactActions = Effect.fn(
     "ArtifactManagementService.listArtifactActions",
@@ -733,10 +760,12 @@ function makeArtifactManagementService(
     changeTags,
     deleteArtifact,
     getArtifact,
+    getArtifactWithOwnerName,
     getVersion,
     getVersionDetails,
     listArtifactActions,
     listArtifacts,
+    listArtifactsWithOwnerNames,
     listVersions,
     restoreVersion,
   });

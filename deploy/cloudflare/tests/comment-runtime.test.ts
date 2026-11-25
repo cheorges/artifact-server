@@ -457,6 +457,70 @@ describe("Cloudflare D1 comments", () => {
     }
   }, 120_000);
 
+  it("AUTH-035: names a page of owners larger than one D1 statement can bind parameters for", async () => {
+    const manyDirectory = await mkdtemp(
+      join(tmpdir(), "artifact-server-cloudflare-many-owners-"),
+    );
+    let manyWorker = await startWorker(manyDirectory);
+    const ownerCount = 55;
+    try {
+      const published = await Promise.all(Array.from(
+        {length: ownerCount},
+        (_, index) => publishArtifact(
+          manyWorker,
+          `many-owners-publish-${String(index).padStart(4, "0")}`,
+        ),
+      ));
+      await manyWorker.stop();
+
+      // Each artifact gets its own member, so one page names 55 owners: more
+      // than D1's 100 bound parameters if every id were its own placeholder.
+      const database = new DatabaseSync(await findD1DatabaseFile(manyDirectory));
+      try {
+        const {installationId} = z.object({installationId: z.string()}).parse(
+          database.prepare(
+            "SELECT installation_id AS installationId FROM projects LIMIT 1",
+          ).get(),
+        );
+        const admit = database.prepare(`
+          INSERT INTO installation_members
+            (id, installation_id, email, display_name, role, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 'member', 'active', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z')
+        `);
+        const handOver = database.prepare(
+          "UPDATE artifacts SET owner_principal_id = ? WHERE id = ?",
+        );
+        for (const [index, publication] of published.entries()) {
+          admit.run(
+            `member_${index}`,
+            installationId,
+            `member-${index}@example.test`,
+            `Member ${index}`,
+          );
+          handOver.run(`member_${index}`, publication.artifact.id);
+        }
+      } finally {
+        database.close();
+      }
+
+      manyWorker = await startWorker(manyDirectory);
+      const response = await authenticatedFetch(
+        manyWorker,
+        `${origin}/api/v1/artifacts?limit=100`,
+      );
+      expect(response.status).toBe(200);
+      const listed = z.object({
+        artifacts: z.array(z.object({ownerDisplayName: z.string().nullable()})),
+      }).parse(await response.json());
+      expect(listed.artifacts).toHaveLength(ownerCount);
+      expect(new Set(listed.artifacts.map(({ownerDisplayName}) => ownerDisplayName)))
+        .toEqual(new Set(Array.from({length: ownerCount}, (_, index) => `Member ${index}`)));
+    } finally {
+      await manyWorker.stop();
+      await rm(manyDirectory, {force: true, recursive: true});
+    }
+  }, 180_000);
+
   it("adds the staged upload grant column to a revision 9 database", async () => {
     const grantDirectory = await mkdtemp(
       join(tmpdir(), "artifact-server-cloudflare-grant-"),

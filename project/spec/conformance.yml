@@ -1817,7 +1817,7 @@ requirements:
     kind: behavior
     behavior: Artifact listings, artifact details, and artifact activity name the artifact's owner and each action's actor by the member's display name or the service key's name, never by email address, and a list scope of mine keeps only the caller's own artifacts through HTTP, MCP, and the web interface.
     owner: authorization
-    source: {file: artifact-server-product-spec.html, anchor: sharing}
+    source: {file: artifact-server-product-spec.html, anchor: owner-names}
     acceptance:
       behavior: {id: AUTH-035-B, description: "Members and a service key publish; the HTTP list, details, and activity and the MCP list and get answer each owner's and actor's name, and scope mine over HTTP and MCP lists only the caller's own artifacts."}
       failure: {id: AUTH-035-F, description: "No answer carries an email address, a deactivated owner keeps their name, scope mine combined with a tag or search never lists another member's artifact, and an unknown scope is refused over HTTP and MCP."}
