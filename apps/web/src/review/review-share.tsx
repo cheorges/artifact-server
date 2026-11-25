@@ -19,6 +19,7 @@ import {
   type ArtifactDetails,
   type ArtifactVersion,
 } from "@/api/client";
+import { PeopleWithAccess } from "./review-share-people.tsx";
 import claudeLogoUrl from "./assets/agents/claude.svg";
 import codexDarkLogoUrl from "./assets/agents/codex-dark.svg";
 import codexLightLogoUrl from "./assets/agents/codex-light.svg";
@@ -43,6 +44,8 @@ type CopiedTarget =
 const copiedResetMilliseconds = 1_600;
 
 interface ReviewShareControlProps {
+  /** Whether the viewer may add and remove people: the owner or an administrator. */
+  readonly canManageGrants: boolean;
   readonly details: ArtifactDetails | null;
   readonly onArtifactChanged: (artifact: ArtifactDetails["artifact"]) => void;
   /** False when the installation turns public links off. */
@@ -54,6 +57,7 @@ interface ReviewShareControlProps {
 
 /** Share one artifact from either the standard viewer header or focus controls. */
 export function ReviewShareControl({
+  canManageGrants,
   details,
   onArtifactChanged,
   publicLinksAvailable,
@@ -164,7 +168,7 @@ export function ReviewShareControl({
           selectedAccess === "public_link"
             ? "The current version can now be opened without signing in."
             : selectedAccess === "restricted"
-              ? "Only you and installation administrators can now find or open this artifact."
+              ? "Only you, installation administrators, and the people you add can now find or open this artifact."
               : "Every signed-in member can now find and open this artifact."
         ),
       );
@@ -434,9 +438,9 @@ export function ReviewShareControl({
                   <legend className="as-visually-hidden">Who can open this artifact</legend>
                   <ShareAccessOption
                     checked={selectedAccess === "restricted"}
-                    description="Only you and installation administrators can find or open it. Other members do not see it in lists or search."
+                    description="You, installation administrators, and the people you add can find and open it. Other members do not see it in lists or search."
                     disabled={pending}
-                    label="Only me"
+                    label="Only me and people I add"
                     onChange={() => setSelectedAccess("restricted")}
                     value="restricted"
                   />
@@ -459,6 +463,14 @@ export function ReviewShareControl({
                     />
                   ) : null}
                 </fieldset>
+                {canManageGrants && details !== null ? (
+                  <PeopleWithAccess
+                    applies={selectedAccess === "restricted"}
+                    artifactId={details.artifact.id}
+                    disabled={pending}
+                    projectId={details.artifact.projectId}
+                  />
+                ) : null}
                 {publicLinksAvailable ? (
                   <p className="as-share-network-note">
                     Public access does not create a tunnel, open a firewall, or make an unreachable server reachable.
@@ -655,7 +667,7 @@ Version: ${selectedVersion.version.number}
 Version ID: ${selectedVersion.version.id}
 Access: ${details.artifact.accessSetting === "public_link"
   ? "public link"
-  : details.artifact.accessSetting === "restricted" ? "only me" : "signed-in members"}
+  : details.artifact.accessSetting === "restricted" ? "only me and people I add" : "signed-in members"}
 Review and comment: ${reviewLink}
 Raw exact version: ${selectedVersion.links.version}
 Moving latest link: ${details.links.artifact}

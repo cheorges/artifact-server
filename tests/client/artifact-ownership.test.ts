@@ -7,6 +7,7 @@
 import {describe, expect, test} from "vitest";
 
 import {
+  accessPillLabel,
   makeCurrentOwnerNotice,
   viewerOwnsOrAdministersArtifact,
 } from "../../apps/web/src/review/artifact-ownership.js";
@@ -45,5 +46,19 @@ describe("artifact ownership in the web interface", () => {
       .toBe("This page belongs to member_a.");
     expect(makeCurrentOwnerNotice(member, "member_ben", "Ben Beispiel")).toBeNull();
     expect(makeCurrentOwnerNotice(member, null, null)).toBeNull();
+  });
+});
+
+describe("the access pill (AUTH-037)", () => {
+  test("a restricted artifact reads shared with you for a grantee and only me for its owner and administrators", () => {
+    expect(accessPillLabel(member, "restricted", "member_ada")).toBe("shared with you");
+    expect(accessPillLabel(member, "restricted", "member_ben")).toBe("only me");
+    expect(accessPillLabel(administrator, "restricted", "member_ada")).toBe("only me");
+  });
+
+  test("other settings read the same for everyone", () => {
+    expect(accessPillLabel(member, "account_required", "member_ada")).toBe("members");
+    expect(accessPillLabel(member, "public_link", "member_ada")).toBe("public");
+    expect(accessPillLabel(serviceKey, "account_required", null)).toBe("members");
   });
 });

@@ -383,7 +383,8 @@ function reviewTools(ref: BindingsRef): readonly ModelContextToolLike[] {
       description:
         `${provenance} List the current project's artifacts with their `
         + "current version ids and owners, for choosing what to open. Use "
-        + "scope mine for only the signed-in person's own artifacts.",
+        + "scope mine for only the signed-in person's own artifacts, or "
+        + "shared_with_me for restricted artifacts others shared with them.",
       execute: async (input) => {
         const {scope} = parseInput(listInputSchema, input);
         const snapshot = await settledSnapshot(ref);
@@ -410,8 +411,9 @@ function reviewTools(ref: BindingsRef): readonly ModelContextToolLike[] {
       inputSchema: {
         properties: {
           scope: {
-            description: "all (default) or mine, the signed-in person's own artifacts.",
-            enum: ["all", "mine"],
+            description: "all (default), mine for the signed-in person's own artifacts, "
+              + "or shared_with_me for restricted artifacts others shared with them.",
+            enum: ["all", "mine", "shared_with_me"],
             type: "string",
           },
         },
@@ -555,7 +557,7 @@ function stateTool(
 }
 
 const listInputSchema = z.object({
-  scope: z.enum(["all", "mine"]).optional(),
+  scope: z.enum(["all", "mine", "shared_with_me"]).optional(),
 }).loose();
 const viewInputSchema = z.object({
   cursor: z.string().optional(),

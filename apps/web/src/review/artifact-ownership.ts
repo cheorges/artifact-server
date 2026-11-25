@@ -38,3 +38,18 @@ export function makeCurrentOwnerNotice(
   if (ownerPrincipalId === null || ownerPrincipalId === viewer.id) return null;
   return `This page belongs to ${ownerDisplayName ?? compactId(ownerPrincipalId)}.`;
 }
+
+/**
+ * The short access label on an artifact card and in Details. A restricted
+ * artifact the viewer neither owns nor administers can only be visible
+ * because it was shared with them (AUTH-037).
+ */
+export function accessPillLabel(
+  viewer: OwnershipViewer,
+  access: "account_required" | "public_link" | "restricted",
+  ownerPrincipalId: string | null,
+): string {
+  if (access === "public_link") return "public";
+  if (access === "account_required") return "members";
+  return viewerOwnsOrAdministersArtifact(viewer, ownerPrincipalId) ? "only me" : "shared with you";
+}

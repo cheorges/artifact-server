@@ -192,6 +192,21 @@ const apiErrorBodySchema = z.object({
 const noContentStatuses = new Set([204, 205]);
 
 export type AccessSetting = z.infer<typeof accessSettingSchema>;
+
+const artifactGrantListSchema = z.object({
+  active: z.boolean(),
+  grants: z.array(z.object({
+    grantedAt: z.string(),
+    grantedByPrincipalId: z.string(),
+    grantee: z.string(),
+    kind: z.literal("email"),
+  })),
+});
+/** The people a restricted artifact is shared with, and whether that applies now. */
+export type ArtifactGrantList = z.infer<typeof artifactGrantListSchema>;
+
+/** Which artifacts the catalog lists. */
+export type ArtifactListScope = "all" | "mine" | "shared_with_me";
 export type DeploymentCapabilities = z.infer<typeof deploymentCapabilitiesSchema>;
 export type SourceFreshness = z.infer<typeof sourceFreshnessSchema>;
 export type SourceBinding = z.infer<typeof sourceBindingSchema>;
@@ -965,7 +980,7 @@ export const api = {
     search = "",
     options: {
       readonly comments?: "all" | "with" | "without";
-      readonly scope?: "all" | "mine";
+      readonly scope?: ArtifactListScope;
       readonly sort?: "comments" | "newest";
     } = {},
   ) => {
@@ -1047,6 +1062,24 @@ export const api = {
     {
       body: JSON.stringify({ accessSetting, expectedCurrentVersionId }),
       headers: mutationHeaders(idempotencyKey),
+      method: "PATCH",
+    },
+  ),
+  artifactGrants: (projectId: string, artifactId: string) => request(
+    artifactGrantListSchema,
+    `/api/v1/artifacts/${encodeURIComponent(artifactId)}/grants?${projectQuery(projectId)}`,
+  ),
+  changeArtifactGrants: (
+    projectId: string,
+    artifactId: string,
+    add: readonly string[],
+    remove: readonly string[],
+  ) => request(
+    artifactGrantListSchema,
+    `/api/v1/artifacts/${encodeURIComponent(artifactId)}/grants?${projectQuery(projectId)}`,
+    {
+      body: JSON.stringify({ add, remove }),
+      headers: mutationHeaders(),
       method: "PATCH",
     },
   ),

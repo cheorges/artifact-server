@@ -62,7 +62,12 @@ import {
   sourceFreshnessLabel,
 } from "@/lib/presentation";
 import {compactId} from "@/lib/compact-id";
-import {makeCurrentOwnerNotice, viewerOwnsOrAdministersArtifact} from "./artifact-ownership.ts";
+import {
+  accessPillLabel,
+  makeCurrentOwnerNotice,
+  type OwnershipViewer,
+  viewerOwnsOrAdministersArtifact,
+} from "./artifact-ownership.ts";
 import artifactServerAnimationUrl from "./assets/artifact-server.svg";
 import {ArtifactMark} from "./artifact-mark.tsx";
 import {
@@ -84,7 +89,7 @@ type ReviewTheme = "dawn" | "moon";
 type InspectorTab = "activity" | "comments" | "compare" | "details" | "files" | "versions";
 type ArtifactListLoadResult = "failed" | "loaded" | "skipped";
 type CatalogCommentFilter = "all" | "with" | "without";
-type CatalogOwnerFilter = "all" | "mine";
+type CatalogOwnerFilter = "all" | "mine" | "shared_with_me";
 type CatalogRefreshState = "complete" | "idle" | "loading";
 type CatalogSort = "comments" | "newest";
 const catalogDefaultWidth = 336;
@@ -173,6 +178,8 @@ function CatalogFilters({
   let triggerLabel = "All artifacts";
   if (ownerFilter === "mine" && activeFilterCount === 1) {
     triggerLabel = "Mine";
+  } else if (ownerFilter === "shared_with_me" && activeFilterCount === 1) {
+    triggerLabel = "Shared with me";
   } else if (commentFilter === "all" && ownerFilter === "all" && tagFilters.length === 1) {
     triggerLabel = tagFilters[0] ?? "1 tag";
   } else if (commentFilter === "all" && ownerFilter === "all" && tagFilters.length > 1) {
@@ -239,6 +246,7 @@ function CatalogFilters({
               {([
                 ["all", "Everyone"],
                 ["mine", "Mine"],
+                ["shared_with_me", "Shared with me"],
               ] as const).map(([value, label]) => (
                 <label className="as-catalog-filter-option" data-selected={ownerFilter === value} key={value}>
                   <input
@@ -1015,6 +1023,11 @@ function ArtifactReview({
   const canDeleteArtifact = canManageArtifacts
     && details !== null
     && viewerOwnsOrAdministersArtifact(session.principal, details.artifact.ownerPrincipalId);
+  // Who an artifact is shared with is for its owner and administrators (AUTH-038).
+  const canManageGrants = canManageArtifacts
+    && details !== null
+    && session.principal.kind === "human"
+    && viewerOwnsOrAdministersArtifact(session.principal, details.artifact.ownerPrincipalId);
   const makeCurrentNotice = details === null
     ? null
     : makeCurrentOwnerNotice(
@@ -1592,7 +1605,11 @@ function ArtifactReview({
               >
                 <span className="as-artifact-card__title-row">
                   <strong>{artifact.name}</strong>
-                  <AccessPill access={artifact.accessSetting} />
+                  <AccessPill
+                    access={artifact.accessSetting}
+                    ownerPrincipalId={artifact.ownerPrincipalId}
+                    viewer={session.principal}
+                  />
                 </span>
                 <span className="as-artifact-card__meta">
                   <span className="as-artifact-card__history">
@@ -1728,6 +1745,7 @@ function ArtifactReview({
                     <span className="as-focus-controls__count">{openCommentCount}</span>
                   </button>
                   <ReviewShareControl
+                    canManageGrants={canManageGrants}
                     details={details}
                     key={`focus-share-${details?.artifact.id ?? "empty"}`}
                     onArtifactChanged={updateArtifact}
@@ -1849,6 +1867,7 @@ function ArtifactReview({
                 </span>
               </button>
               <ReviewShareControl
+                canManageGrants={canManageGrants}
                 details={details}
                 key={`header-share-${details?.artifact.id ?? "empty"}`}
                 onArtifactChanged={updateArtifact}
@@ -2065,6 +2084,7 @@ function ArtifactReview({
                 onTagsChange={changeTags}
                 onTombstone={tombstoneArtifact}
                 version={selectedVersion}
+                viewer={session.principal}
               />
             ) : inspectorTab === "comments" ? (
               <ReviewCommentsInspector
@@ -2182,6 +2202,7 @@ function DetailsInspector({
   onTagsChange,
   onTombstone,
   version,
+  viewer,
 }: {
   readonly canDelete: boolean;
   readonly canManage: boolean;
@@ -2192,6 +2213,7 @@ function DetailsInspector({
   readonly onTagsChange: (tags: readonly string[]) => Promise<void>;
   readonly onTombstone: () => Promise<boolean>;
   readonly version: ArtifactVersion;
+  readonly viewer: OwnershipViewer;
 }) {
   const linkedDriftDescription = details.sourceBinding === undefined
     ? null
@@ -2211,7 +2233,13 @@ function DetailsInspector({
         />
         <InspectorRow
           label="access"
-          value={<AccessPill access={details.artifact.accessSetting} />}
+          value={(
+            <AccessPill
+              access={details.artifact.accessSetting}
+              ownerPrincipalId={details.artifact.ownerPrincipalId}
+              viewer={viewer}
+            />
+          )}
         />
         <InspectorRow label="created" title={formatTimestamp(details.artifact.createdAt)} value={formatTimestamp(details.artifact.createdAt)} />
         <InspectorRow label="artifact id" mono title={details.artifact.id} value={details.artifact.id} />
@@ -2769,10 +2797,18 @@ function IconButton({
   );
 }
 
-function AccessPill({access}: {readonly access: ArtifactDetails["artifact"]["accessSetting"]}) {
+function AccessPill({
+  access,
+  ownerPrincipalId,
+  viewer,
+}: {
+  readonly access: ArtifactDetails["artifact"]["accessSetting"];
+  readonly ownerPrincipalId: string | null;
+  readonly viewer: OwnershipViewer;
+}) {
   return (
     <span className="as-pill" data-access={access}>
-      {access === "public_link" ? "public" : access === "restricted" ? "only me" : "members"}
+      {accessPillLabel(viewer, access, ownerPrincipalId)}
     </span>
   );
 }
