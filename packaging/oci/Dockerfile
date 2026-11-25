@@ -6,7 +6,9 @@ ARG NODE_IMAGE=node:24.22.2-trixie-slim@sha256:0820eaa85e07d0490446dd01d14707e17
 # dependencies lag behind security fixes.
 ARG DEBIAN_IMAGE=debian:trixie-20261104-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
-FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS build
+# pnpm and the workspace manifests, for the build and the production dependencies. Both run on
+# the build platform. pnpm keeps its store in $PNPM_HOME/store, the cache mount below.
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS pnpm-toolchain
 
 ENV PNPM_HOME=/opt/pnpm
 ENV PATH=${PNPM_HOME}:${PATH} \
@@ -17,9 +19,12 @@ RUN corepack enable \
     && corepack prepare pnpm@10.34.3 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/web/package.json ./apps/web/package.json
 COPY patches ./patches
-RUN --mount=type=cache,id=artifact-server-pnpm,target=/root/.local/share/pnpm/store \
+
+FROM pnpm-toolchain AS build
+
+COPY apps/web/package.json ./apps/web/package.json
+RUN --mount=type=cache,id=artifact-server-pnpm,target=/opt/pnpm/store \
     pnpm install --frozen-lockfile --ignore-scripts
 
 COPY tsconfig.json tsconfig.build.json ./
@@ -32,25 +37,19 @@ RUN pnpm build \
     && node scripts/local-package-metadata.mjs prepare package.json package.release.json
 
 # The server's production dependencies, installed on their own: `pnpm prune --prod` after the
-# build leaves every package of the workspace's install, dev tools included, in
-# node_modules/.pnpm. Like the build, it runs on the build platform, so a production dependency
-# must not install a platform-specific binary.
-FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS production-dependencies
+# build leaves every package of the workspace's install, dev tools included, in the virtual
+# store (node_modules/.pnpm). Like the build, it runs on the build platform, so a production
+# dependency must not install a platform-specific native module; the install fails if one does.
+FROM pnpm-toolchain AS production-dependencies
 
-ENV PNPM_HOME=/opt/pnpm
-ENV PATH=${PNPM_HOME}:${PATH} \
-    CI=true
-WORKDIR /build
+RUN --mount=type=cache,id=artifact-server-pnpm,target=/opt/pnpm/store \
+    pnpm install --frozen-lockfile --prod --ignore-scripts \
+    && if find node_modules -type f -name '*.node' -print -quit | grep -q .; then \
+         echo 'A production dependency installs a platform-specific native module.' >&2; \
+         exit 1; \
+       fi
 
-RUN corepack enable \
-    && corepack prepare pnpm@10.34.3 --activate
-
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY patches ./patches
-RUN --mount=type=cache,id=artifact-server-pnpm,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile --prod --ignore-scripts
-
-FROM ${NODE_IMAGE} AS node
+FROM ${NODE_IMAGE} AS node-binary
 
 FROM ${DEBIAN_IMAGE} AS runtime
 
@@ -75,10 +74,11 @@ ENV ARTIFACT_SERVER_IMAGE_REVISION=${IMAGE_REVISION} \
 
 WORKDIR /opt/artifact-server
 
-COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-binary /usr/local/bin/node /usr/local/bin/node
 
-# The same user as NODE_IMAGE's.
-RUN groupadd --gid 1000 node \
+# The same user as NODE_IMAGE's. `node --version` proves the copied binary loads here.
+RUN node --version \
+    && groupadd --gid 1000 node \
     && useradd --uid 1000 --gid node --shell /bin/bash --create-home node \
     && install -d -m 0755 /usr/local/share/ca-certificates
 
