@@ -182,6 +182,16 @@ export function ReviewShareControl({
   const serverOrigin = details === null ? "" : new URL(details.links.artifact).origin;
   const mcpAddress = `${serverOrigin}/mcp`;
 
+  const currentAccess = details?.artifact.accessSetting;
+  // Copies outside the server exist only if the page was served publicly (AUTH-034).
+  const accessNote = selectedAccess === currentAccess
+    ? null
+    : selectedAccess === "public_link"
+      ? "The link can be redistributed. Earlier versions and history stay account-required."
+      : publicArtifact && publicLinksAvailable
+        ? "Downloaded or externally cached copies cannot be recalled."
+        : null;
+
   return (
     <Popover.Root open={open} onOpenChange={updateOpen}>
       <Popover.Trigger
@@ -454,13 +464,9 @@ export function ReviewShareControl({
                     Public access does not create a tunnel, open a firewall, or make an unreachable server reachable.
                   </p>
                 ) : null}
-                {selectedAccess !== details?.artifact.accessSetting ? (
-                  <p className="as-share-access-warning">
-                    {selectedAccess === "public_link"
-                      ? "The link can be redistributed. Earlier versions and history stay account-required."
-                      : "Downloaded or externally cached copies cannot be recalled."}
-                  </p>
-                ) : null}
+                {accessNote === null ? null : (
+                  <p className="as-share-access-warning">{accessNote}</p>
+                )}
                 {failure === null ? null : (
                   <p className="as-share-message" data-tone="error" role="alert">{failure}</p>
                 )}

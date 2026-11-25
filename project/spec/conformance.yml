@@ -1801,7 +1801,7 @@ requirements:
 
   - id: AUTH-034
     kind: behavior
-    behavior: An access change warns that downloaded or externally cached copies cannot be recalled only when it ends a public link the installation was serving. Changing an artifact that had no public link, or any change while the installation turns public links off, carries no warning, so an agent never reports a page as having been public when it was not.
+    behavior: An access change warns that downloaded or externally cached copies cannot be recalled only when it may have ended a public link the installation was serving, while public links are on and the new setting is not a public link. That means the setting it replaced, read in the change's own transaction, was a public link, or the request replays an earlier change, which cannot tell what that change replaced. Changing an artifact that had no public link, or any change while the installation turns public links off, carries no warning over HTTP, MCP, and the bulk shutdown, and the web Share dialog mentions unrecallable copies only when leaving a public link, so nobody is told a page was public when it was not.
     owner: authorization
     source: {file: artifact-server-product-spec.html, anchor: safety}
     acceptance:
@@ -1809,7 +1809,7 @@ requirements:
       failure: {id: AUTH-034-F, description: "Changing an artifact that is no longer public answers without a warning over HTTP and MCP, and after the installation turns public links off, ending a link made earlier answers without a warning over HTTP, MCP, and the bulk shutdown."}
     deployments: *all
     status: implementing
-    proof_gap: Proved through HTTP and MCP on the local SQLite server. A replay cannot tell the setting before the original change, so while public links are on it repeats the warning even when that change did not end a public link. No deployment-specific evidence is recorded.
+    proof_gap: Proved through HTTP and MCP on the local SQLite server, by a service test in which a competing change commits between the service's first read and the change's transaction, by Postgres and D1 runtime tests, and for the Share dialog in Chromium. Accepted gaps, not tested. A replay after the installation turns public links off answers without a warning even when the original change ended a served link, whose own answer carried the warning. While public links are being turned off across several processes, a process that already has the new setting can answer without a warning while another still serves the link for the length of a rolling restart. No deployment-specific evidence is recorded.
     depends_on: [AUTH-006, AUTH-007]
     evidence: []
 
