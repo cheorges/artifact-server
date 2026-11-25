@@ -39,6 +39,6 @@ export function restrictedScopeParameters(
   scope: RestrictedArtifactScope,
 ): readonly [number, string | null] {
   if (scope.kind === "all") return [1, null];
-  if (scope.kind === "owned") return [0, scope.principalId];
+  if (scope.kind === "owned" || scope.kind === "owned_or_granted") return [0, scope.principalId];
   return [0, null];
 }

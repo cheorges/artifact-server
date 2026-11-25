@@ -15,6 +15,7 @@ import {
   IdentityConflict,
   IdentityNotFound,
 } from "../core/errors.js";
+import {normalizeEmailAddress} from "../core/email-address.js";
 import type {
   IdentityRepositoryFailure,
   LoginAttemptRejected,
@@ -855,11 +856,8 @@ function invalidApiKey(): Effect.Effect<never, AuthenticationRequired> {
 
 const normalizeEmail = Effect.fn("InstallationAccessService.normalizeEmail")(
   function*(value: string): Effect.fn.Return<string, IdentityConflict> {
-    const normalized = value.trim().toLocaleLowerCase("en-US");
-    if (
-      normalized.length < 3 || normalized.length > 320 ||
-      !normalized.includes("@")
-    ) {
+    const normalized = normalizeEmailAddress(value);
+    if (normalized === null) {
       return yield* new IdentityConflict({
         message: "A valid email address is required.",
       });

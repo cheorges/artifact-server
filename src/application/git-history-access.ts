@@ -116,7 +116,7 @@ function makeGitHistoryAccessService(
     );
     if (
       artifact === null || artifact.deletedAt !== null ||
-      !canSeeArtifact(command.principal, artifact) ||
+      !canSeeArtifact(command.principal, artifact, false) ||
       setting?.enabled !== true || coordinates?.status !== "provisioned" ||
       dependencies.provider === null
     ) {

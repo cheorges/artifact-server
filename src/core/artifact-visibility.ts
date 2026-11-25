@@ -1,6 +1,6 @@
 import {Effect} from "effect";
 
-import {ArtifactNotFound} from "./errors.js";
+import {ArtifactNotFound, AuthorizationDenied} from "./errors.js";
 import {
   isHumanAdministrator,
   principalKinds,
@@ -13,26 +13,55 @@ import type {RestrictedArtifactScope} from "./ports.js";
  * Report whether one principal may see an artifact at all.
  *
  * Only `restricted` artifacts narrow visibility: their owner, through any of
- * the owner's own channels, and installation administrators see them. Service
- * principals never do, whatever their capabilities. Every other access setting
- * leaves the decision to the ordinary capability checks.
+ * the owner's own channels, installation administrators, and members whose
+ * current email matches one of its grants see them. Service principals never
+ * do, whatever their capabilities. Every other access setting leaves the
+ * decision to the ordinary capability checks.
  */
 export function canSeeArtifact(
   principal: Principal,
   artifact: Pick<ArtifactRecord, "accessSetting" | "ownerPrincipalId">,
+  grantedToViewer: boolean,
 ): boolean {
   if (artifact.accessSetting !== accessSettings.restricted) return true;
-  return isHumanAdministrator(principal) || ownsArtifact(principal, artifact);
+  return isHumanAdministrator(principal) || ownsArtifact(principal, artifact) ||
+    (principal.kind === principalKinds.human && grantedToViewer);
 }
 
-/** Fail exactly like a missing artifact when the principal may not see it. */
+/** Report whether visibility depends on a grant lookup for this principal. */
+export function needsGrantLookup(
+  principal: Principal,
+  artifact: Pick<ArtifactRecord, "accessSetting" | "ownerPrincipalId">,
+): boolean {
+  return artifact.accessSetting === accessSettings.restricted &&
+    principal.kind === principalKinds.human &&
+    !isHumanAdministrator(principal) &&
+    !ownsArtifact(principal, artifact);
+}
+
+/**
+ * Fail exactly like a missing artifact when the principal may not see it
+ * without a grant: the owner and administrators only, for a restricted one.
+ */
 export function requireArtifactVisible(
   principal: Principal,
   artifact: Pick<ArtifactRecord, "accessSetting" | "ownerPrincipalId">,
 ): Effect.Effect<void, ArtifactNotFound> {
-  return canSeeArtifact(principal, artifact)
+  return canSeeArtifact(principal, artifact, false)
     ? Effect.void
     : Effect.fail(new ArtifactNotFound({message: "The artifact does not exist."}));
+}
+
+/** Refuse management of a restricted artifact to anyone but its owner or an administrator. */
+export function requireRestrictedManagement(
+  principal: Principal,
+  artifact: Pick<ArtifactRecord, "accessSetting" | "ownerPrincipalId">,
+): Effect.Effect<void, AuthorizationDenied> {
+  return artifact.accessSetting !== accessSettings.restricted || mayChangeRestriction(principal, artifact)
+    ? Effect.void
+    : Effect.fail(new AuthorizationDenied({
+      message: "Only the owner or an administrator can change who sees this artifact.",
+    }));
 }
 
 /** Report whether a principal may move an artifact to or from `restricted`. */
@@ -62,8 +91,19 @@ export function isOwnerOrHumanAdministrator(
     (artifact.ownerPrincipalId !== null && artifact.ownerPrincipalId === principal.id);
 }
 
-/** The restricted artifacts one principal may list. */
+/** The restricted artifacts one principal may list: own and granted ones. */
 export function restrictedArtifactScope(
+  principal: Principal,
+): RestrictedArtifactScope {
+  if (isHumanAdministrator(principal)) return {kind: "all"};
+  if (principal.kind === principalKinds.human) {
+    return {kind: "owned_or_granted", principalId: principal.id};
+  }
+  return {kind: "none"};
+}
+
+/** The restricted artifacts whose threads one principal may dispatch: own ones only. */
+export function restrictedDispatchScope(
   principal: Principal,
 ): RestrictedArtifactScope {
   if (isHumanAdministrator(principal)) return {kind: "all"};

@@ -21,6 +21,7 @@ export const errorCodes = {
   interactiveLoginUnavailable: "INTERACTIVE_LOGIN_UNAVAILABLE",
   invalidComment: "INVALID_COMMENT",
   invalidDispatch: "INVALID_DISPATCH",
+  grantLimitReached: "GRANT_LIMIT_REACHED",
   invalidInput: "INVALID_INPUT",
   invalidLinkPath: "INVALID_LINK_PATH",
   invalidManifestPath: "INVALID_MANIFEST_PATH",
@@ -150,6 +151,18 @@ export class DispatchStateConflict extends Schema.TaggedError<DispatchStateConfl
 /** The authenticated principal is not permitted to perform the operation. */
 export class AuthorizationDenied extends Schema.TaggedError<AuthorizationDenied>()(
   "AuthorizationDenied",
+  messageField,
+) {}
+
+/** A grant change would leave an artifact with more grants than allowed. */
+export class GrantLimitReached extends Schema.TaggedError<GrantLimitReached>()(
+  "GrantLimitReached",
+  messageField,
+) {}
+
+/** A grant change names a malformed address or adds and removes the same one. */
+export class InvalidArtifactGrant extends Schema.TaggedError<InvalidArtifactGrant>()(
+  "InvalidArtifactGrant",
   messageField,
 ) {}
 
@@ -358,6 +371,7 @@ export class ArtifactRepositoryFailure extends Schema.TaggedError<ArtifactReposi
       "assertPublicationSourceReady",
       "cancelAgentDispatch",
       "changeAccessSetting",
+      "changeArtifactGrants",
       "changeTags",
       "claimAgentDispatch",
       "clearCommentThreads",
@@ -491,6 +505,8 @@ const artifactServerFailureSchema = Schema.Union([
   InteractiveLoginUnavailable,
   LoginAttemptRejected,
   AuthorizationDenied,
+  GrantLimitReached,
+  InvalidArtifactGrant,
   ContentBootstrapRejected,
   ContentSessionRequired,
   InvalidArtifactName,

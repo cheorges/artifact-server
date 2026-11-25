@@ -194,11 +194,15 @@ export interface DeleteArtifact {
   readonly projectId: string;
 }
 
-/** Restricted artifacts one reader may list: every one, those it owns, or none. */
+/**
+ * Restricted artifacts one reader may list: every one, none, those it owns,
+ * or those it owns or is granted.
+ */
 export type RestrictedArtifactScope =
   | {readonly kind: "all"}
   | {readonly kind: "none"}
-  | {readonly kind: "owned"; readonly principalId: string};
+  | {readonly kind: "owned"; readonly principalId: string}
+  | {readonly kind: "owned_or_granted"; readonly principalId: string};
 
 /** Values used to read one bounded page of active artifacts. */
 export interface ListArtifacts {

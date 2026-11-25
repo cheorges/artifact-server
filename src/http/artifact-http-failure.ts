@@ -34,6 +34,10 @@ export function artifactServerFailureResponse(failure: ArtifactServerFailure) {
       return {code: errorCodes.authenticationRequired, message: failure.message, status: 401};
     case "AuthorizationDenied":
       return {code: errorCodes.authorizationDenied, message: failure.message, status: 403};
+    case "GrantLimitReached":
+      return {code: errorCodes.grantLimitReached, message: failure.message, status: 409};
+    case "InvalidArtifactGrant":
+      return {code: errorCodes.invalidInput, message: failure.message, status: 422};
     case "CommentNotFound":
       return {code: errorCodes.commentNotFound, message: failure.message, status: 404};
     case "CommentResolved":
