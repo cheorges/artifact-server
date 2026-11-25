@@ -55,13 +55,15 @@ class RecoveryOperationError extends Error {
   }
 }
 
-const stateQueries: readonly NamedQuery[] = [
+/** Every D1 table, read in a stable order, so a restore that changes any of them is noticed. */
+export const stateQueries: readonly NamedQuery[] = [
   {name: "artifact_server_schema", sql: "SELECT * FROM artifact_server_schema ORDER BY component"},
   {name: "projects", sql: "SELECT * FROM projects ORDER BY id"},
   {name: "artifacts", sql: "SELECT * FROM artifacts ORDER BY id"},
   {name: "versions", sql: "SELECT * FROM versions ORDER BY id"},
   {name: "manifest_entries", sql: "SELECT * FROM manifest_entries ORDER BY version_id, path"},
   {name: "artifact_tags", sql: "SELECT * FROM artifact_tags ORDER BY artifact_id, tag"},
+  {name: "artifact_grants", sql: "SELECT * FROM artifact_grants ORDER BY artifact_id, grantee_kind, grantee"},
   {name: "idempotency_records", sql: "SELECT * FROM idempotency_records ORDER BY project_id, idempotency_key"},
   {name: "actions", sql: "SELECT * FROM actions ORDER BY id"},
   {name: "staged_uploads", sql: "SELECT * FROM staged_uploads ORDER BY id"},

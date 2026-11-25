@@ -8,6 +8,8 @@ import {z} from "zod";
 import {unstable_dev, type Unstable_DevWorker} from "wrangler";
 import {afterAll, beforeAll, describe, expect, it} from "vitest";
 
+import {stateQueries} from "../src/recovery-worker.js";
+
 const apiToken = "cloudflare-comment-test-api-token-00000001";
 const origin = "https://artifacts.example.test";
 const contentDomain = "content.example.test";
@@ -574,6 +576,13 @@ describe("Cloudflare D1 comments", () => {
           "SELECT version FROM artifact_server_schema WHERE component = 'runtime'",
         ).get()).version).toBe(12);
         expect(upgraded.prepare("PRAGMA table_info(artifact_grants)").all()).toHaveLength(5);
+        // The recovery check reads every table, so a restore that loses grants fails.
+        const tables = z.array(z.object({name: z.string()})).parse(upgraded.prepare(`
+          SELECT name FROM sqlite_master
+          WHERE type = 'table' AND substr(name, 1, 7) <> 'sqlite_' AND substr(name, 1, 4) <> '_cf_'
+          ORDER BY name
+        `).all()).map(({name}) => name);
+        expect(stateQueries.map(({name}) => name).toSorted()).toStrictEqual(tables);
       } finally {
         upgraded.close();
       }
