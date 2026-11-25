@@ -471,7 +471,7 @@ describe("Cloudflare D1 comments", () => {
     }
   }, 120_000);
 
-  it("AUTH-037 AUTH-038: D1 adds the grant table on upgrade, shares a restricted artifact with members by email, holds the cap, and ends access on removal", async () => {
+  it("AUTH-037 AUTH-038 AUTH-039: D1 adds the grant table on upgrade, shares a restricted artifact with members by email, holds the cap, ends access on removal, and records one sharing row per real change", async () => {
     const grantsDirectory = await mkdtemp(
       join(tmpdir(), "artifact-server-cloudflare-grants-"),
     );
@@ -594,8 +594,34 @@ describe("Cloudflare D1 comments", () => {
         upgraded.close();
       }
 
+      const sharingRows = () => {
+        const reader = new DatabaseSync(d1File, {readOnly: true});
+        try {
+          return z.array(z.object({
+            action: z.string(),
+            authorizedByPrincipalId: z.string().nullable(),
+            grantee: z.string(),
+            principalId: z.string(),
+          })).parse(reader.prepare(`
+            SELECT action, authorized_by_principal_id AS authorizedByPrincipalId, grantee,
+                   principal_id AS principalId
+            FROM actions WHERE artifact_id = ? AND action IN ('grant_add', 'grant_remove')
+            ORDER BY action, grantee
+          `).all(target.artifact.id));
+        } finally {
+          reader.close();
+        }
+      };
+      const sharingRow = (action: string, grantee: string) => ({
+        action,
+        authorizedByPrincipalId: ada.memberId,
+        grantee,
+        principalId: ada.memberId,
+      });
+
       const granted = await changeGrants(ada, {add: [" Ben@Example.test "]});
       expect(granted.status).toBe(200);
+      expect(sharingRows()).toStrictEqual([sharingRow("grant_add", "ben@example.test")]);
       expect(grantSchema.parse(await granted.json())).toStrictEqual({
         active: true,
         grants: [{grantee: "ben@example.test", kind: "email"}],
@@ -616,6 +642,7 @@ describe("Cloudflare D1 comments", () => {
       expect(failureSchema.parse(await tooMany.json()).error.code).toBe("GRANT_LIMIT_REACHED");
       expect(grantSchema.parse(await (await as(ada, `${artifactUrl}/grants`)).json()).grants
         .map(({grantee}) => grantee)).toStrictEqual(["ben@example.test"]);
+      expect(sharingRows()).toStrictEqual([sharingRow("grant_add", "ben@example.test")]);
 
       const openContentAccess = (member: MemberKey): number => {
         const reader = new DatabaseSync(d1File, {readOnly: true});
@@ -637,6 +664,24 @@ describe("Cloudflare D1 comments", () => {
       expect((await as(ben, artifactUrl)).status).toBe(404);
       expect(openContentAccess(ben)).toBe(0);
       expect(openContentAccess(ada)).toBeGreaterThan(0);
+      // Ada's own address was never granted, so only Ben's removal is recorded.
+      expect(sharingRows()).toStrictEqual([
+        sharingRow("grant_add", "ben@example.test"),
+        sharingRow("grant_remove", "ben@example.test"),
+      ]);
+
+      // Only the owner lists the sharing rows; a grantee pages past them.
+      expect((await changeGrants(ada, {add: ["ben@example.test"]})).status).toBe(200);
+      const activitySchema = z.object({
+        actions: z.array(z.object({action: z.string(), grantee: z.string().nullable()})),
+      });
+      const activityOf = async (member: MemberKey) =>
+        activitySchema.parse(await (await as(member, `${artifactUrl}/actions`)).json()).actions
+          .filter(({grantee}) => grantee !== null)
+          .map(({action}) => action)
+          .toSorted();
+      expect(await activityOf(ada)).toStrictEqual(["grant_add", "grant_add", "grant_remove"]);
+      expect(await activityOf(ben)).toStrictEqual([]);
 
       // Switching to restricted ends an administrator's content access too: it
       // may come from a member-bound key, which cannot see a restricted artifact.

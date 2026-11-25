@@ -2750,6 +2750,37 @@ export function createD1ArtifactRepository(
             AND principal_id IS NOT ?
         `).bind(command.projectId, command.artifactId, removed, artifact.ownerPrincipalId))
         : [];
+      // One activity row per address the batch really adds or removes
+      // (AUTH-039). Each runs just before its grant statement, so it sees
+      // whether the grant existed before that change.
+      const recordSharing = (
+        action: typeof artifactActionKinds.grantAdd | typeof artifactActionKinds.grantRemove,
+        addresses: string,
+      ) => database.prepare(`
+        INSERT INTO actions (
+          id, project_id, artifact_id, version_id, action, principal_id,
+          authorized_by_principal_id, idempotency_key, created_at, grantee
+        )
+        SELECT lower(hex(randomblob(16))), ?, ?,
+          (SELECT current_version_id FROM artifacts WHERE id = ?),
+          ?, ?, ?, ? || ':' || lower(hex(randomblob(16))), ?, listed.value
+        FROM json_each(?) AS listed
+        WHERE ${action === artifactActionKinds.grantAdd ? "NOT EXISTS" : "EXISTS"} (
+          SELECT 1 FROM artifact_grants
+          WHERE artifact_id = ? AND grantee_kind = 'email' AND grantee = listed.value
+        )
+      `).bind(
+        command.projectId,
+        command.artifactId,
+        command.artifactId,
+        action,
+        command.principalId,
+        command.authorizedByPrincipalId,
+        action,
+        command.changedAt,
+        addresses,
+        command.artifactId,
+      );
       try {
         await database.batch([
           // The batch applies only while the artifact is live and as restricted
@@ -2760,12 +2791,14 @@ export function createD1ArtifactRepository(
              WHERE project_id = ? AND id = ? AND deleted_at IS NULL AND restricted = ?`,
             [command.projectId, command.artifactId, restricted ? 1 : 0],
           ),
+          recordSharing(artifactActionKinds.grantAdd, added),
           database.prepare(`
             INSERT INTO artifact_grants
               (artifact_id, grantee_kind, grantee, granted_by_principal_id, granted_at)
             SELECT ?, 'email', value, ?, ? FROM json_each(?) WHERE true
             ON CONFLICT DO NOTHING
           `).bind(command.artifactId, command.principalId, command.changedAt, added),
+          recordSharing(artifactActionKinds.grantRemove, removed),
           database.prepare(`
             DELETE FROM artifact_grants
             WHERE artifact_id = ? AND grantee_kind = 'email'
