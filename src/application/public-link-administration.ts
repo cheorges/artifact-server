@@ -1,6 +1,7 @@
 import {Context, Effect, Layer} from "effect";
 
 import {
+  type ArtifactAccessChange,
   type ArtifactManagementFailure,
   ArtifactManagementService,
 } from "./artifact-management.js";
@@ -17,7 +18,6 @@ import type {Principal} from "../core/identity.js";
 import {
   accessSettings,
   type ArtifactRecord,
-  type ArtifactState,
   type PageCursor,
   type ProjectRecord,
   type VersionRecord,
@@ -76,7 +76,7 @@ export type MakePublicLinkPrivateResult =
   | {
     readonly item: MakePublicLinkPrivateItem;
     readonly replayed: boolean;
-    readonly state: ArtifactState;
+    readonly state: ArtifactAccessChange;
     readonly status: "made_private";
   }
   | {

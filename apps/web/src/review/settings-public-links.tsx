@@ -171,7 +171,10 @@ export function PublicLinksScreen() {
       setSelectedKeys(new Set(nextFailures.map(({item}) => selectionKey(item))));
       if (response.summary.succeeded > 0) {
         setNotice(
-          `${response.summary.succeeded} public ${response.summary.succeeded === 1 ? "link is" : "links are"} now private. ${response.warning}`,
+          [
+            `${response.summary.succeeded} public ${response.summary.succeeded === 1 ? "link is" : "links are"} now private.`,
+            response.warning,
+          ].filter((part) => part !== null).join(" "),
         );
       }
     } catch (caught) {

@@ -1799,6 +1799,20 @@ requirements:
     depends_on: [AUTH-002, AUTH-014, AUTH-015, VER-001, CMT-017]
     evidence: []
 
+  - id: AUTH-034
+    kind: behavior
+    behavior: An access change warns that downloaded or externally cached copies cannot be recalled only when it ends a public link the installation was serving. Changing an artifact that had no public link, or any change while the installation turns public links off, carries no warning, so an agent never reports a page as having been public when it was not.
+    owner: authorization
+    source: {file: artifact-server-product-spec.html, anchor: safety}
+    acceptance:
+      behavior: {id: AUTH-034-B, description: "With public links on, make a public artifact account required through HTTP, MCP, and the administrator bulk shutdown; each answer carries the recall warning, and an idempotent replay of the HTTP change repeats it."}
+      failure: {id: AUTH-034-F, description: "Changing an artifact that is no longer public answers without a warning over HTTP and MCP, and after the installation turns public links off, ending a link made earlier answers without a warning over HTTP, MCP, and the bulk shutdown."}
+    deployments: *all
+    status: implementing
+    proof_gap: Proved through HTTP and MCP on the local SQLite server. A replay cannot tell the setting before the original change, so while public links are on it repeats the warning even when that change did not end a public link. No deployment-specific evidence is recorded.
+    depends_on: [AUTH-006, AUTH-007]
+    evidence: []
+
   - id: SEC-001
     kind: security
     behavior: Published websites are treated as untrusted arbitrary browser JavaScript.

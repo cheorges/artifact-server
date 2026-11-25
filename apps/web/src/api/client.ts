@@ -253,7 +253,7 @@ const publicLinkMutationResponseSchema = z.object({
     requested: z.number().int().positive(),
     succeeded: z.number().int().nonnegative(),
   }),
-  warning: z.string(),
+  warning: z.string().nullable(),
 });
 
 export type PublicLinkItem = z.infer<typeof publicLinkItemSchema>;

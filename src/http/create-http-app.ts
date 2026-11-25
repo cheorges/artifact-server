@@ -2130,7 +2130,7 @@ export function createHttpApp(
           dependencies.contentDomain,
           state,
         ),
-        warning: body.accessSetting !== accessSettings.publicLink
+        warning: state.endedPublicLink
           ? "New public requests are blocked. Copies already downloaded or cached outside Artifact Server cannot be recalled."
           : null,
       });
@@ -3091,7 +3091,11 @@ function publicLinkMutationResponse(
       requested: projected.length,
       succeeded,
     },
-    warning: "New public requests are blocked for successful items. Copies already downloaded or cached outside Artifact Server cannot be recalled.",
+    warning: results.some((result) =>
+        result.status === "made_private" && result.state.endedPublicLink
+      )
+      ? "New public requests are blocked for successful items. Copies already downloaded or cached outside Artifact Server cannot be recalled."
+      : null,
   };
 }
 

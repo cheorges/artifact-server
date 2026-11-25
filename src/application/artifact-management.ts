@@ -34,6 +34,7 @@ import {
 } from "../core/artifact-visibility.js";
 import type { Principal } from "../core/identity.js";
 import {
+  publicLinkPolicies,
   type PublicLinkPolicy,
   requireAccessSettingAllowed,
 } from "../core/public-link-policy.js";
@@ -95,6 +96,17 @@ export interface ChangeArtifactAccessCommand extends ReadArtifactCommand {
   readonly accessSetting: AccessSetting;
   readonly expectedCurrentVersionId: string;
   readonly idempotencyKey: string;
+}
+
+/** The artifact after an access change, and whether the change ended a served public link. */
+export interface ArtifactAccessChange extends ArtifactState {
+  /**
+   * True when the change stopped a public link this installation was serving,
+   * so copies fetched while it was public may still exist elsewhere. A replay
+   * cannot tell the setting before the original change, so it answers true
+   * whenever public links are on and the new setting is not a public link.
+   */
+  readonly endedPublicLink: boolean;
 }
 
 /** Input for replacing one artifact's complete tag set. */
@@ -216,7 +228,7 @@ export type ArtifactManagementFailure =
 interface ArtifactManagementOperations {
   readonly changeAccess: (
     command: ChangeArtifactAccessCommand,
-  ) => Effect.Effect<ArtifactState, ArtifactManagementFailure>;
+  ) => Effect.Effect<ArtifactAccessChange, ArtifactManagementFailure>;
   readonly changeTags: (
     command: ChangeArtifactTagsCommand,
   ) => Effect.Effect<ArtifactState, ArtifactManagementFailure>;
@@ -540,7 +552,7 @@ function makeArtifactManagementService(
       );
       const idempotencyKey = yield* parseIdempotencyKey(command.idempotencyKey);
       const createdAt = DateTime.formatIso(yield* dependencies.clock.now);
-      return yield* dependencies.repository.changeAccessSetting({
+      const state = yield* dependencies.repository.changeAccessSetting({
         accessSetting: command.accessSetting,
         artifactId: artifact.id,
         authorizedByPrincipalId: command.principal.authorizedByPrincipalId,
@@ -558,6 +570,12 @@ function makeArtifactManagementService(
         principalId: command.principal.id,
         projectId: project.id,
       });
+      // With public links off the content service already refuses public
+      // requests, so no change here can end a link that was serving.
+      const endedPublicLink = dependencies.publicLinks === publicLinkPolicies.on &&
+        command.accessSetting !== accessSettings.publicLink &&
+        (state.replayed || artifact.accessSetting === accessSettings.publicLink);
+      return {...state, endedPublicLink};
     },
   );
 
