@@ -39,6 +39,7 @@ const sessionSchema = z.object({
   capabilities: z.object({
     gitHistory: z.unknown(),
     linkedArtifacts: z.boolean(),
+    publicLinks: z.boolean(),
   }).strict(),
 }).loose();
 

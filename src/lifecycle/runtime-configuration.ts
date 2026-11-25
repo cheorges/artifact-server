@@ -9,6 +9,10 @@ import {
   defaultSessionLifetimeHours,
   maximumSessionLifetimeHours,
 } from "../core/session-lifetime.js";
+import {
+  publicLinkPolicies,
+  type PublicLinkPolicy,
+} from "../core/public-link-policy.js";
 import {managedApiKeyCredentialPattern} from
   "../core/installation-identity.js";
 import {
@@ -68,6 +72,10 @@ const postgresUrlSchema = Schema.String.check(
   Schema.isPattern(/^postgres(?:ql)?:\/\/[^\s]+$/u),
 );
 const linkedFilesModeSchema = Schema.Literals(["off", "on"]);
+const publicLinkPolicySchema = Schema.Literals([
+  publicLinkPolicies.off,
+  publicLinkPolicies.on,
+]);
 const urlStringSchema = Schema.String.check(
   Schema.isPattern(/^https?:\/\/[^\s]+$/u),
 );
@@ -99,6 +107,7 @@ export interface CompactRuntimeConfiguration {
   readonly linkedFiles: "off" | "on";
   readonly linkRoots: readonly string[];
   readonly port: number;
+  readonly publicLinks: PublicLinkPolicy;
   readonly readinessWithdrawalMilliseconds: number;
   readonly sessionLifetimeMilliseconds: number;
   readonly shutdownDeadlineMilliseconds: number;
@@ -124,6 +133,7 @@ export interface ExternalStorageRuntimeConfiguration {
   readonly objectStorage: ObjectStorageProviderFactory;
   readonly port: number;
   readonly postgresMaxConnections: number;
+  readonly publicLinks: PublicLinkPolicy;
   readonly readinessWithdrawalMilliseconds: number;
   readonly sessionLifetimeMilliseconds: number;
   readonly shutdownDeadlineMilliseconds: number;
@@ -254,6 +264,7 @@ export const parseCompactRuntimeConfiguration = Effect.fn(
     linkedFiles: yield* parseLinkedFilesMode(input.environment),
     linkRoots: yield* parseLinkRoots(input.environment),
     port: yield* parsePort(input.port),
+    publicLinks: yield* parsePublicLinkPolicy(input.environment),
     readinessWithdrawalMilliseconds: yield* parseMilliseconds(
       input.environment,
       "ARTIFACT_SERVER_READINESS_WITHDRAWAL_MS",
@@ -333,6 +344,7 @@ export const parseExternalStorageRuntimeConfiguration = Effect.fn(
     objectStorage: configuredObjectStorage.factory,
     port: yield* parsePort(input.port),
     postgresMaxConnections: yield* parsePostgresMaxConnections(environment),
+    publicLinks: yield* parsePublicLinkPolicy(environment),
     readinessWithdrawalMilliseconds: yield* parseMilliseconds(
       environment,
       "ARTIFACT_SERVER_READINESS_WITHDRAWAL_MS",
@@ -743,6 +755,17 @@ export function parseLinkedFilesMode(
     "ARTIFACT_SERVER_LINKED_FILES",
     environment["ARTIFACT_SERVER_LINKED_FILES"] ?? "off",
     linkedFilesModeSchema,
+  );
+}
+
+/** Parse `ARTIFACT_SERVER_PUBLIC_LINKS` for any serving entry point (AUTH-006). */
+export function parsePublicLinkPolicy(
+  environment: NodeJS.ProcessEnv,
+): Effect.Effect<PublicLinkPolicy, RuntimeConfigurationError> {
+  return parseRequiredEnvironment(
+    "ARTIFACT_SERVER_PUBLIC_LINKS",
+    environment["ARTIFACT_SERVER_PUBLIC_LINKS"] ?? publicLinkPolicies.on,
+    publicLinkPolicySchema,
   );
 }
 

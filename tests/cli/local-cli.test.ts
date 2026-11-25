@@ -385,11 +385,46 @@ describe("local Artifact Server CLI", () => {
       await rm(parentDirectory, {force: true, recursive: true});
     }
   }, publicationTestTimeoutMilliseconds);
+
+  test("AUTH-006: the publish CLI cannot create a public link on a server that turns public links off", async () => {
+    const parentDirectory = await mkdtemp(
+      path.join(tmpdir(), "artifact-server-public-links-cli-"),
+    );
+    const dataDirectory = path.join(parentDirectory, "data");
+    const pagePath = path.join(parentDirectory, "page.html");
+    await writeFile(pagePath, "<!doctype html><title>Public-link policy</title>");
+    const port = await availablePort();
+    const server = startCli(dataDirectory, port, {ARTIFACT_SERVER_PUBLIC_LINKS: "off"});
+    try {
+      await waitForReady(server, port);
+      const publish = (extra: readonly string[]) => runPublishCliToExit([
+        pagePath,
+        "--data",
+        dataDirectory,
+        "--server",
+        `http://127.0.0.1:${port}`,
+        ...extra,
+      ]);
+
+      const refused = await publish(["--public"]);
+      expect(refused.exitCode).not.toBe(0);
+      expect(refused.output).toContain("This installation does not allow public links.");
+
+      const accepted = await publish([]);
+      expect(accepted.exitCode).toBe(0);
+      expect(publicationSchema.parse(JSON.parse(accepted.output)).artifact.accessSetting)
+        .toBe("account_required");
+    } finally {
+      await stopProcess(server);
+      await rm(parentDirectory, {force: true, recursive: true});
+    }
+  }, publicationTestTimeoutMilliseconds);
 });
 
 function startCli(
   dataDirectory: string,
   port: number,
+  environment: NodeJS.ProcessEnv = {},
 ): ChildProcessWithoutNullStreams {
   const child = spawn(
     path.join(repositoryRoot, "node_modules/.bin/tsx"),
@@ -401,7 +436,11 @@ function startCli(
       "--port",
       String(port),
     ],
-    {cwd: repositoryRoot, stdio: ["pipe", "pipe", "pipe"]},
+    {
+      cwd: repositoryRoot,
+      env: {...process.env, ...environment},
+      stdio: ["pipe", "pipe", "pipe"],
+    },
   );
   runningProcesses.add(child);
   return child;

@@ -45,6 +45,8 @@ const copiedResetMilliseconds = 1_600;
 interface ReviewShareControlProps {
   readonly details: ArtifactDetails | null;
   readonly onArtifactChanged: (artifact: ArtifactDetails["artifact"]) => void;
+  /** False when the installation turns public links off. */
+  readonly publicLinksAvailable: boolean;
   readonly selectedPath: string | null;
   readonly selectedVersion: ArtifactVersion | null;
   readonly triggerClassName: string;
@@ -54,6 +56,7 @@ interface ReviewShareControlProps {
 export function ReviewShareControl({
   details,
   onArtifactChanged,
+  publicLinksAvailable,
   selectedPath,
   selectedVersion,
   triggerClassName,
@@ -435,18 +438,22 @@ export function ReviewShareControl({
                     onChange={() => setSelectedAccess("account_required")}
                     value="account_required"
                   />
-                  <ShareAccessOption
-                    checked={selectedAccess === "public_link"}
-                    description="No sign-in. Anyone who can reach this server and has the link can open the current version."
-                    disabled={pending}
-                    label="Public link"
-                    onChange={() => setSelectedAccess("public_link")}
-                    value="public_link"
-                  />
+                  {publicLinksAvailable ? (
+                    <ShareAccessOption
+                      checked={selectedAccess === "public_link"}
+                      description="No sign-in. Anyone who can reach this server and has the link can open the current version."
+                      disabled={pending}
+                      label="Public link"
+                      onChange={() => setSelectedAccess("public_link")}
+                      value="public_link"
+                    />
+                  ) : null}
                 </fieldset>
-                <p className="as-share-network-note">
-                  Public access does not create a tunnel, open a firewall, or make an unreachable server reachable.
-                </p>
+                {publicLinksAvailable ? (
+                  <p className="as-share-network-note">
+                    Public access does not create a tunnel, open a firewall, or make an unreachable server reachable.
+                  </p>
+                ) : null}
                 {selectedAccess !== details?.artifact.accessSetting ? (
                   <p className="as-share-access-warning">
                     {selectedAccess === "public_link"

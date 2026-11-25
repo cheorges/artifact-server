@@ -129,6 +129,10 @@ import type {
 import type {IdentityRepository} from "../core/identity-ports.js";
 import type {ExternalIdentityAdmissionPolicy} from "../core/installation-identity.js";
 import type { ManifestEntry } from "../core/model.js";
+import {
+  publicLinkPolicies,
+  type PublicLinkPolicy,
+} from "../core/public-link-policy.js";
 import {randomBase64Url} from "../core/random.js";
 import {uploadGrantPrefix} from "../core/upload-grant.js";
 import { FileVerificationError } from "../storage/verified-file.js";
@@ -176,6 +180,8 @@ export interface ApplicationAdapters {
   readonly linked?: LinkedApplicationAdapters;
   readonly localBootstrapCredential: Redacted.Redacted | null;
   readonly protectBootstrapAdministrator: boolean;
+  /** Installation public-link switch; absent leaves public links on. */
+  readonly publicLinks?: PublicLinkPolicy | undefined;
   readonly repository: ArtifactRepository &
     CommentRepository &
     ContentSessionRepository &
@@ -231,6 +237,7 @@ export function createApplicationLayer(
   const clock = {
     now: Effect.sync(() => DateTime.makeUnsafe(adapters.clock.now())),
   };
+  const publicLinks = adapters.publicLinks ?? publicLinkPolicies.on;
   const publishDependencies: PublishArtifactDependencies = {
     blobs: {
       put: (write) =>
@@ -245,6 +252,7 @@ export function createApplicationLayer(
     },
     clock,
     ids: adapters.ids,
+    publicLinks,
     repository: {
       assertPublicationSourceReady: (source, manifestDigest, commitTime) =>
         Effect.tryPromise({
@@ -481,6 +489,7 @@ export function createApplicationLayer(
   };
   const managementDependencies: ArtifactManagementDependencies = {
     clock,
+    publicLinks,
     repository: {
       changeAccessSetting: (command) =>
         Effect.tryPromise({
@@ -691,6 +700,7 @@ export function createApplicationLayer(
 
   const contentDependencies: ContentAccessDependencies = {
     clock,
+    publicLinks,
     repository: {
       createContentBootstrap: (command) =>
         Effect.tryPromise({

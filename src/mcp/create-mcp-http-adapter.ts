@@ -25,6 +25,7 @@ import {
   principalCapabilities,
   principalKinds,
 } from "../core/identity.js";
+import {publicLinkPolicies} from "../core/public-link-policy.js";
 import type {GitHistoryCapabilityReader} from
   "../git-history/git-history-capability.js";
 import {
@@ -65,6 +66,7 @@ export interface McpHttpAdapterDependencies {
   readonly linkedArtifacts?: boolean;
   readonly mode: ArtifactMcpServerDependencies["mode"];
   readonly oauthResource: string | null;
+  readonly publicLinks?: ArtifactMcpServerDependencies["publicLinks"];
 }
 
 /** Stateless MCP HTTP adapter mounted by every Artifact Server deployment. */
@@ -90,6 +92,7 @@ export function createMcpHttpAdapter(
         gitHistory: dependencies.gitHistory.read(),
         linkedArtifacts: dependencies.linkedArtifacts === true,
         mode: dependencies.mode,
+        publicLinks: dependencies.publicLinks ?? publicLinkPolicies.on,
         requestId: requestIdFrom(context.requestInfo),
       };
       return createArtifactMcpServer(

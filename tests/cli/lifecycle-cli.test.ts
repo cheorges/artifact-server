@@ -482,6 +482,51 @@ describe("Artifact Server lifecycle CLI", () => {
     }
   }, 30_000);
 
+  test("AUTH-006: ARTIFACT_SERVER_PUBLIC_LINKS turns public links off for compact and external-storage serving", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "artifact-server-public-links-"));
+    const dataDirectory = path.join(parent, "data");
+    try {
+      const initialized = await runCli([
+        "init",
+        "--admin-email",
+        "admin@example.test",
+        "--data",
+        dataDirectory,
+      ]);
+      expect(initialized.exitCode).toBe(0);
+      const compact = (publicLinks?: string) =>
+        Effect.runPromise(parseCompactRuntimeConfiguration({
+          dataDirectory,
+          environment: compactEnvironment(
+            publicLinks === undefined ? {} : {ARTIFACT_SERVER_PUBLIC_LINKS: publicLinks},
+          ),
+          hostname: "127.0.0.1",
+          port: "8787",
+        }));
+      const external = (publicLinks?: string) =>
+        Effect.runPromise(parseExternalStorageRuntimeConfiguration({
+          environment: publicLinks === undefined
+            ? externalConfigurationEnvironment()
+            : {...externalConfigurationEnvironment(), ARTIFACT_SERVER_PUBLIC_LINKS: publicLinks},
+          hostname: "127.0.0.1",
+          port: "8787",
+        }));
+
+      expect((await compact()).publicLinks).toBe("on");
+      expect((await compact("off")).publicLinks).toBe("off");
+      expect((await external()).publicLinks).toBe("on");
+      expect((await external("off")).publicLinks).toBe("off");
+      const invalid = {
+        field: "ARTIFACT_SERVER_PUBLIC_LINKS",
+        reason: "invalid_value",
+      };
+      await expect(compact("disabled")).rejects.toMatchObject(invalid);
+      await expect(external("false")).rejects.toMatchObject(invalid);
+    } finally {
+      await rm(parent, {force: true, recursive: true});
+    }
+  }, 30_000);
+
   test("foundation: compact serving withdraws readiness and integrity scans real committed bytes", async () => {
     const parent = await mkdtemp(path.join(tmpdir(), "artifact-server-drain-"));
     const dataDirectory = path.join(parent, "data");

@@ -28,6 +28,7 @@ import type {
 import type {Clock} from "../../src/core/ports.js";
 import type {ExternalIdentityAdmissionPolicy} from "../../src/core/installation-identity.js";
 import {localOwnerBrowserAccess} from "../../src/core/browser-access.js";
+import type {PublicLinkPolicy} from "../../src/core/public-link-policy.js";
 import type {BrowserAccess} from "../../src/core/browser-access.js";
 import {defaultCompletedRequestLogSampleRate} from
   "../../src/observability/application-observability.js";
@@ -105,6 +106,7 @@ export async function startTestServer(
     readonly mcpOAuthResource?: McpOAuthResourceConfiguration;
     readonly observability?: boolean;
     readonly port?: number;
+    readonly publicLinks?: PublicLinkPolicy;
     readonly sessionLifetimeMilliseconds?: number;
     readonly webAssetsRoot?: string;
   } = {},
@@ -195,6 +197,9 @@ export async function startTestServer(
   }
   if (options.mcpOAuthResource !== undefined) {
     config = {...config, mcpOAuthResource: options.mcpOAuthResource};
+  }
+  if (options.publicLinks !== undefined) {
+    config = {...config, publicLinks: options.publicLinks};
   }
   if (options.webAssetsRoot !== undefined) {
     config = {...config, webAssetsRoot: options.webAssetsRoot};

@@ -9,6 +9,10 @@ import type {InteractiveIdentityProvider} from "../application/interactive-login
 import type {Clock} from "../core/ports.js";
 import type {BrowserAccess} from "../core/browser-access.js";
 import type {ExternalIdentityAdmissionPolicy} from "../core/installation-identity.js";
+import {
+  publicLinkPolicies,
+  type PublicLinkPolicy,
+} from "../core/public-link-policy.js";
 import {SystemClock, SystemIdGenerator} from "../core/system.js";
 import {createHttpApp} from "../http/create-http-app.js";
 import type {
@@ -91,6 +95,8 @@ export interface ExternalStorageRuntimeConfig {
   readonly mcpOAuthResource?: McpOAuthResourceConfiguration;
   readonly objectStorage: ObjectStorageProviderFactory;
   readonly postgresMaxConnections?: number;
+  /** Installation public-link switch; absent leaves public links on. */
+  readonly publicLinks?: PublicLinkPolicy;
   readonly runtimeLifecycle?: RuntimeLifecycle;
   readonly serviceVersion?: string;
   readonly sessionLifetimeMilliseconds?: number;
@@ -161,6 +167,7 @@ export async function createExternalStorageRuntime(
       repository: identityRepository,
     });
     const {blobs, staging} = connectedObjectStorage;
+    const publicLinks = config.publicLinks ?? publicLinkPolicies.on;
     const applicationAdapters: Parameters<typeof createApplicationLayer>[0] = {
       apiToken: null,
       blobs,
@@ -177,6 +184,7 @@ export async function createExternalStorageRuntime(
       interactiveIdentityProvider: config.interactiveIdentityProvider ?? null,
       localBootstrapCredential: config.localBootstrapCredential ?? null,
       protectBootstrapAdministrator: false,
+      publicLinks,
       repository,
       sessionLifetimeMilliseconds: config.sessionLifetimeMilliseconds,
       staging,
@@ -240,6 +248,7 @@ export async function createExternalStorageRuntime(
       contentDomain: config.contentDomain,
       gitHistory: gitHistoryMonitor?.reader ??
         fixedGitHistoryCapabilityReader(gitHistory.capability),
+      publicLinks,
       readiness: () => externalStorageReadiness(database, connectedObjectStorage),
       trustedApplicationOrigin: config.applicationOrigin ?? null,
       webAssets: createNodeWebAssetStore(),

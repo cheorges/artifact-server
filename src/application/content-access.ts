@@ -17,7 +17,10 @@ import {
 } from "../core/errors.js";
 import type { Principal } from "../core/identity.js";
 import {
-  accessSettings,
+  isPubliclyReadable,
+  type PublicLinkPolicy,
+} from "../core/public-link-policy.js";
+import {
   type ContentBootstrapRecord,
   type ContentSessionRecord,
   type ArtifactVersion,
@@ -103,6 +106,8 @@ export type VersionContentFallback = "entry" | "none";
 /** Dependencies used to construct private and public content access. */
 export interface ContentAccessDependencies {
   readonly clock: ApplicationClock;
+  /** Installation switch; when off, public links need a session like any other. */
+  readonly publicLinks: PublicLinkPolicy;
   readonly repository: ContentAccessRepository;
   readonly secrets: ContentSecretProvider;
 }
@@ -367,7 +372,7 @@ function makeContentAccessService(
     if (content === null) return null;
     yield* Effect.annotateCurrentSpan({"artifact.project.id": content.projectId});
     if (
-      content.accessSetting === accessSettings.publicLink &&
+      isPubliclyReadable(content.accessSetting, dependencies.publicLinks) &&
       content.isCurrent
     ) {
       return content;
@@ -420,7 +425,9 @@ function makeContentAccessService(
     yield* Effect.annotateCurrentSpan({
       "artifact.project.id": current.artifact.projectId,
     });
-    if (current.artifact.accessSetting !== accessSettings.publicLink) {
+    if (
+      !isPubliclyReadable(current.artifact.accessSetting, dependencies.publicLinks)
+    ) {
       return yield* sessionRequired();
     }
     return current;

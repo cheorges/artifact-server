@@ -25,6 +25,10 @@ import {
 } from "../core/errors.js";
 import type { Principal } from "../core/identity.js";
 import {
+  type PublicLinkPolicy,
+  requireAccessSettingAllowed,
+} from "../core/public-link-policy.js";
+import {
   accessSettings,
   type AccessSetting,
   type CanonicalManifest,
@@ -134,6 +138,8 @@ export interface PublishArtifactDependencies {
   readonly blobs: PublishBlobStorage;
   readonly clock: ApplicationClock;
   readonly ids: IdGenerator;
+  /** Installation switch that refuses new public links when off. */
+  readonly publicLinks: PublicLinkPolicy;
   readonly repository: PublishArtifactRepository;
 }
 
@@ -225,6 +231,10 @@ function makePublishArtifactService(
     command: PublishPreparedNewArtifactCommand,
   ): Effect.fn.Return<PublishedVersion, PublishArtifactFailure> {
     yield* authorization.requireArtifactCreation(command.principal);
+    yield* requireAccessSettingAllowed(
+      command.accessSetting,
+      dependencies.publicLinks,
+    );
     // The creator becomes the owner, so only a person can start one restricted:
     // a service principal could never see what it created.
     if (

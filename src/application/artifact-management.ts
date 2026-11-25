@@ -34,6 +34,10 @@ import {
 } from "../core/artifact-visibility.js";
 import type { Principal } from "../core/identity.js";
 import {
+  type PublicLinkPolicy,
+  requireAccessSettingAllowed,
+} from "../core/public-link-policy.js";
+import {
   accessSettings,
   type AccessSetting,
   type ArtifactActionPage,
@@ -191,6 +195,8 @@ export interface ArtifactManagementRepository {
 /** Dependencies used to construct artifact management operations. */
 export interface ArtifactManagementDependencies {
   readonly clock: ApplicationClock;
+  /** Installation switch that refuses new public links when off. */
+  readonly publicLinks: PublicLinkPolicy;
   readonly repository: ArtifactManagementRepository;
 }
 
@@ -526,6 +532,12 @@ function makeArtifactManagementService(
           message: "Only the owner or an administrator can change who sees this artifact.",
         });
       }
+      // Moving away from a public link stays allowed, so administrators can
+      // clean up links made before the switch was turned off.
+      yield* requireAccessSettingAllowed(
+        command.accessSetting,
+        dependencies.publicLinks,
+      );
       const idempotencyKey = yield* parseIdempotencyKey(command.idempotencyKey);
       const createdAt = DateTime.formatIso(yield* dependencies.clock.now);
       return yield* dependencies.repository.changeAccessSetting({

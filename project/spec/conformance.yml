@@ -1367,7 +1367,8 @@ requirements:
       behavior: {id: AUTH-006-B, description: "Disable public links and confirm that new and existing artifacts cannot be made or remain publicly readable under server policy."}
       failure: {id: AUTH-006-F, description: "Members, agents, API keys, and Plannotator cannot bypass the administrator's public-link policy."}
     deployments: *all
-    status: specified
+    status: implementing
+    proof_gap: ARTIFACT_SERVER_PUBLIC_LINKS=off is enforced in the publish, access-change, and content services and proved through HTTP, MCP, the CLI, and the web interface on the local SQLite server, and the AWS package passes it to the task. The Cloudflare, Google Cloud, and Helm packages do not pass the switch yet, and the Postgres runtime has no deployment-specific evidence.
     depends_on: [AUTH-003]
     evidence: []
 

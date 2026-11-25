@@ -165,6 +165,24 @@ endpoint accepts only Microsoft Graph tokens. A person is therefore recognized
 on `/mcp` after signing in through the browser once; a first contact through
 MCP alone is refused by the admission rules above.
 
+## Turn public links off
+
+A public link opens an artifact's current version without sign-in. To keep
+every artifact behind sign-in, start the server with:
+
+```sh
+ARTIFACT_SERVER_PUBLIC_LINKS=off
+```
+
+The server then refuses `public_link` on publish and on access change, through
+the HTTP API, the CLI, MCP, and the web interface, which no longer offers the
+option. Artifacts made public earlier keep their setting but are served only to
+signed-in members. Administrators find them under Settings > Public links and
+make them account-required there. The default is `on`.
+
+The AWS package sets this variable from its `publicLinks` setting. The other
+packages do not pass it yet.
+
 ## Back up the installation
 
 Back up metadata and artifact files as one coordinated recovery set. Use the procedure in the selected deployment guide.

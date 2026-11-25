@@ -28,6 +28,7 @@ const sessionSchema = z.object({
       providerState: z.literal("misconfigured"),
     }).strict(),
     linkedArtifacts: z.boolean(),
+    publicLinks: z.boolean(),
   }).strict(),
 }).loose();
 const linkedPublicationSchema = z.object({

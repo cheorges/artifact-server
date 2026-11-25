@@ -19,9 +19,10 @@ export interface BrowserFixture {
 export async function startBrowserFixture(
   browser: Browser,
   options: {readonly timezoneId?: string} = {},
+  serverOptions: Parameters<typeof startTestServer>[1] = {},
 ): Promise<BrowserFixture> {
   const installation = await createTestInstallation();
-  const server = await startTestServer(installation);
+  const server = await startTestServer(installation, serverOptions);
   const context = await browser.newContext(options);
   const page = await context.newPage();
   return {context, installation, page, server};

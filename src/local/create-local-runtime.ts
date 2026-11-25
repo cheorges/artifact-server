@@ -53,6 +53,10 @@ import type {ExpiredStagingCleanupReport} from
   "../application/expired-staging-cleanup.js";
 import {createNodeWebAssetStore} from "../http/node-web-assets.js";
 import {browserAccessModes} from "../core/browser-access.js";
+import {
+  publicLinkPolicies,
+  type PublicLinkPolicy,
+} from "../core/public-link-policy.js";
 import {ensureBootstrapManagedApiKey} from
   "../application/bootstrap-managed-api-key.js";
 import {
@@ -108,6 +112,8 @@ export interface LocalRuntimeConfig {
   readonly localBootstrapToken?: string;
   readonly mcpOAuthResource?: McpOAuthResourceConfiguration;
   readonly observability?: boolean;
+  /** Installation public-link switch; absent leaves public links on. */
+  readonly publicLinks?: PublicLinkPolicy;
   readonly runtimeLifecycle?: RuntimeLifecycle;
   readonly installationId?: string;
   readonly serviceVersion?: string;
@@ -214,6 +220,7 @@ export async function createLocalRuntime(
       }),
     ),
   );
+  const publicLinks = config.publicLinks ?? publicLinkPolicies.on;
   let applicationAdapters: Parameters<typeof createLocalApplicationLayer>[0] = {
     apiToken: config.browserAccess.mode === browserAccessModes.localOwner
       ? apiToken
@@ -238,6 +245,7 @@ export async function createLocalRuntime(
       }),
     protectBootstrapAdministrator:
       config.browserAccess.mode === browserAccessModes.localOwner,
+    publicLinks,
     repository,
     sessionLifetimeMilliseconds: config.sessionLifetimeMilliseconds,
     staging,
@@ -303,6 +311,7 @@ export async function createLocalRuntime(
       gitHistory: gitHistoryMonitor?.reader ??
         fixedGitHistoryCapabilityReader(gitHistory.capability),
       linkedArtifacts: linkedFilesEnabled,
+      publicLinks,
       trustedApplicationOrigin: config.applicationOrigin ?? null,
       webAssets: createNodeWebAssetStore(config.webAssetsRoot),
     };

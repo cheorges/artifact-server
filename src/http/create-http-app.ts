@@ -116,6 +116,11 @@ import {
   type VersionRecord,
 } from "../core/model.js";
 import type { BlobStore } from "../core/ports.js";
+import {
+  isPubliclyReadable,
+  publicLinkPolicies,
+  type PublicLinkPolicy,
+} from "../core/public-link-policy.js";
 import { isUploadGrantToken } from "../core/upload-grant.js";
 import {
   disabledGitHistoryCapability,
@@ -493,6 +498,11 @@ export interface HttpAppDependencies {
    */
   readonly linkedArtifacts?: boolean;
   readonly mcpOAuthResource?: McpOAuthResourceConfiguration;
+  /**
+   * Installation public-link switch; absent leaves public links on. The
+   * application services enforce it; here it shapes discovery and caching.
+   */
+  readonly publicLinks?: PublicLinkPolicy;
   readonly readiness?: ReadinessProbe;
   readonly runtimeLifecycle?: RuntimeLifecycle;
   readonly trustedApplicationOrigin: string | null;
@@ -555,6 +565,7 @@ export function createHttpApp(
   const gitHistory = dependencies.gitHistory ?? fixedGitHistoryCapabilityReader(
     disabledGitHistoryCapability(),
   );
+  const publicLinks = dependencies.publicLinks ?? publicLinkPolicies.on;
   const mcp = createMcpHttpAdapter({
     allowedHostnames: mcpAllowedHostnames,
     allowedOriginHostnames: mcpAllowedHostnames,
@@ -565,6 +576,7 @@ export function createHttpApp(
     linkedArtifacts: dependencies.linkedArtifacts === true,
     mode: dependencies.trustedApplicationOrigin === null ? "local" : "remote",
     oauthResource: dependencies.mcpOAuthResource?.resource ?? null,
+    publicLinks,
   });
   const boundedJsonBody = bodyLimit({
     maxSize: maximumJsonRequestBytes,
@@ -1051,6 +1063,7 @@ export function createHttpApp(
       capabilities: {
         gitHistory: gitHistory.read(),
         linkedArtifacts: dependencies.linkedArtifacts === true,
+        publicLinks: publicLinks === publicLinkPolicies.on,
       },
       principal: context.get("principal"),
     }));
@@ -3496,8 +3509,10 @@ async function serveVersionContent(
   if (content === null) {
     return versionNotFoundResponse();
   }
-  const publiclyCacheable = content.accessSetting === accessSettings.publicLink &&
-    content.isCurrent;
+  const publiclyCacheable = isPubliclyReadable(
+    content.accessSetting,
+    dependencies.publicLinks ?? publicLinkPolicies.on,
+  ) && content.isCurrent;
   return serveStoredVersionContent(
     context,
     content,

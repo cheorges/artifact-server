@@ -170,6 +170,7 @@ describe("linked artifacts over the local HTTP boundary", () => {
       capabilities: z.object({
         gitHistory: z.unknown(),
         linkedArtifacts: z.boolean(),
+        publicLinks: z.boolean(),
       }).strict(),
     }).loose().parse(await session.json());
     expect(sessionBody.capabilities.linkedArtifacts).toBe(false);

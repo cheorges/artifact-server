@@ -61,6 +61,11 @@ import {
   type SourceBindingRecord,
   type StagedUpload,
 } from "../core/model.js";
+import {
+  isPubliclyReadable,
+  publicLinkPolicies,
+  type PublicLinkPolicy,
+} from "../core/public-link-policy.js";
 import {principalKinds, type Principal} from "../core/identity.js";
 import {
   gitHistoryProviders,
@@ -384,6 +389,8 @@ export interface ArtifactMcpServerDependencies {
   /** Advertises the local linked-artifact capability in discovery. */
   readonly linkedArtifacts?: boolean;
   readonly mode: "local" | "remote";
+  /** Installation public-link switch; absent leaves public links on. */
+  readonly publicLinks?: PublicLinkPolicy;
   readonly requestId: string;
 }
 
@@ -620,6 +627,7 @@ export function createArtifactMcpServer(
         dependencies.mode,
         dependencies.linkedArtifacts === true,
         dependencies.gitHistory,
+        dependencies.publicLinks ?? publicLinkPolicies.on,
       ),
       "Artifact Server publishes actual files through an upload plan. It does not accept inline HTML, CSS, JavaScript, or base64 content."),
   );
@@ -2349,6 +2357,7 @@ function capabilities(
   mode: "local" | "remote",
   linkedArtifacts: boolean,
   gitHistory: GitHistoryCapability,
+  publicLinks: PublicLinkPolicy,
 ) {
   return {
     gitHistory,
@@ -2385,14 +2394,12 @@ function capabilities(
       scope: "project" as const,
     },
     sharing: {
-      // Local mode has one person, so keeping an artifact to oneself means nothing there.
-      modes: mode === "local"
-        ? [accessSettings.accountRequired, accessSettings.publicLink]
-        : [
-          accessSettings.accountRequired,
-          accessSettings.publicLink,
-          accessSettings.restricted,
-        ],
+      modes: [
+        accessSettings.accountRequired,
+        ...(publicLinks === publicLinkPolicies.on ? [accessSettings.publicLink] : []),
+        // Local mode has one person, so keeping an artifact to oneself means nothing there.
+        ...(mode === "local" ? [] : [accessSettings.restricted]),
+      ],
     },
   };
 }
@@ -2651,7 +2658,12 @@ async function authorizedBrowserUrl(
       management.getArtifact({artifactId, principal, projectId})
     ),
   );
-  if (details.artifact.accessSetting === accessSettings.publicLink) {
+  if (
+    isPubliclyReadable(
+      details.artifact.accessSetting,
+      dependencies.publicLinks ?? publicLinkPolicies.on,
+    )
+  ) {
     return exactVersion
       ? versionBrowserUrl(
         applicationUrl,
