@@ -32,7 +32,7 @@ const capabilities: readonly {
   { description: "List and read artifact metadata.", label: "Read artifacts", value: "artifact:read" },
   { description: "Create new artifacts.", label: "Create artifacts", value: "artifact:create" },
   { description: "Publish new immutable versions.", label: "Publish versions", value: "artifact:publish:any" },
-  { description: "Restore, change tags and access, or tombstone.", label: "Manage artifacts", value: "artifact:manage:any" },
+  { description: "Restore, change tags and access, and delete only artifacts this key or its member owns.", label: "Manage artifacts", value: "artifact:manage:any" },
   { description: "Open account-required artifact content.", label: "Issue content sessions", value: "content-session:issue" },
   { description: "Create, rename, archive, and unarchive projects.", label: "Manage projects", value: "project:manage" },
   { description: "Register a coding agent and claim dispatched annotations.", label: "Connect agents", value: "agent:connect" },

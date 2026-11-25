@@ -51,7 +51,7 @@ Call `artifact_get` immediately before a write to obtain the current version ID.
 - `artifact_set_visibility`: set `restricted` (only the owner and administrators), `account_required`, or `public_link` without changing file bytes. Only the owner or an administrator can switch to or from `restricted`.
 - `artifact_set_tags`: replace the complete tag set. Preserve existing tags the user did not ask to remove.
 - `artifact_restore_version`: make an existing saved version current. This restores an artifact version; it does not restore a server backup. When the user identifies the target relatively, such as "the older of the latest two," run `artifact_version_list` again immediately before the restore and confirm that the chosen version still has that relationship to the current version. An optimistic current-version guard alone does not preserve a relative description.
-- `artifact_delete`: use only for an explicit request to delete one artifact. Repeat the artifact name, server, and project before the destructive call. This does not delete the installation.
+- `artifact_delete`: use only for an explicit request to delete one artifact. Repeat the artifact name, server, and project before the destructive call. Only the artifact's owner or an installation administrator can delete it; anyone else is refused with `AUTHORIZATION_DENIED`. This does not delete the installation.
 
 Project creation, rename, archive, or unarchive are ordinary product actions but must be explicit. Use `project_create`, `project_rename`, `project_archive`, or `project_unarchive`. Archiving a project preserves readable history and stops new publication until it is unarchived.
 

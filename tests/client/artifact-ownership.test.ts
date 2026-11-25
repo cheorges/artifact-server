@@ -40,8 +40,9 @@ describe("artifact ownership in the web interface", () => {
   test("Make current names the owner only on someone else's artifact", () => {
     expect(makeCurrentOwnerNotice(member, "member_ada", "Ada Lovelace"))
       .toBe("This page belongs to Ada Lovelace.");
+    // Without a name the short id stands in, as in Details.
     expect(makeCurrentOwnerNotice(member, "member_ada", null))
-      .toBe("This page belongs to another member.");
+      .toBe("This page belongs to member_a.");
     expect(makeCurrentOwnerNotice(member, "member_ben", "Ben Beispiel")).toBeNull();
     expect(makeCurrentOwnerNotice(member, null, null)).toBeNull();
   });

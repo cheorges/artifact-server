@@ -330,7 +330,7 @@ Start with a small, explicit tool surface:
 | `artifact_version_list` | List immutable saved versions and their exact content addresses. Use `artifact_open` when a user needs an authorized browser address. |
 | `artifact_diff` | Return a bounded comparison summary and a link to the full comparison. |
 | `artifact_restore_version` | Make an existing immutable version current again. |
-| `artifact_delete` | Delete one artifact after an optimistic current-version check. |
+| `artifact_delete` | Delete one artifact after an optimistic current-version check. Only its owner or an installation administrator may delete it (AUTH-036). |
 | `project_git_history_status` | Read whether optional Git history is on for one project. |
 | `project_git_history_estimate` | For a project-management principal, estimate repositories, versions, provider operations, copied bytes, and pointer bytes before enabling that project's optional Git handoff. Makes no provider request. |
 | `project_set_git_history` | Enable or disable one project's optional Git handoff. Enabling requires explicit estimate confirmation; setting the current value is a no-op. |

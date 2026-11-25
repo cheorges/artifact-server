@@ -38,6 +38,16 @@ everyone, and the web interface offered Delete on a colleague's page without
 saying whose it was (UAT, November 5, 2026). Agent hooks that ask before a
 delete run only inside Claude Code and do not cover the browser.
 
+## Consequences
+
+- A rotated key keeps its principal, so it keeps deleting what it published.
+  A key that is revoked and issued again is a new principal: only
+  administrators delete the old key's artifacts.
+- On a local installation the CLI publishes with the installation's
+  bootstrap key, a service key. Artifacts published in the browser or
+  through an MCP sign-in belong to the person, so the CLI cannot delete
+  them; the signed-in administrator can delete any artifact.
+
 ## Requirements
 
 - **AUTH-036:** only the owner and administrators delete an artifact,

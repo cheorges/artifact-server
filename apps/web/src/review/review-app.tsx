@@ -61,6 +61,7 @@ import {
   sourceDriftDescription,
   sourceFreshnessLabel,
 } from "@/lib/presentation";
+import {compactId} from "@/lib/compact-id";
 import {makeCurrentOwnerNotice, viewerOwnsOrAdministersArtifact} from "./artifact-ownership.ts";
 import artifactServerAnimationUrl from "./assets/artifact-server.svg";
 import {ArtifactMark} from "./artifact-mark.tsx";
@@ -2888,7 +2889,3 @@ function reviewPreviewKind(
   return "other";
 }
 
-function compactId(value: string): string {
-  const unprefixed = value.startsWith("ver_") ? value.slice(4) : value;
-  return unprefixed.slice(0, 8);
-}

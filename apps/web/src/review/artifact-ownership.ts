@@ -1,3 +1,5 @@
+import {compactId} from "../lib/compact-id.ts";
+
 /** The parts of the signed-in principal that decide ownership in the interface. */
 export interface OwnershipViewer {
   readonly authorizedByPrincipalId: string | null;
@@ -23,12 +25,16 @@ export function viewerOwnsOrAdministersArtifact(
     || (ownerPrincipalId !== null && ownerPrincipalId === viewer.id);
 }
 
-/** The line Make current adds when the viewer is not the artifact's owner. */
+/**
+ * The line Make current adds when the viewer is not the artifact's owner,
+ * naming the owner, or showing their short id as Details does when the owner
+ * has no name.
+ */
 export function makeCurrentOwnerNotice(
   viewer: OwnershipViewer,
   ownerPrincipalId: string | null,
   ownerDisplayName: string | null,
 ): string | null {
   if (ownerPrincipalId === null || ownerPrincipalId === viewer.id) return null;
-  return `This page belongs to ${ownerDisplayName ?? "another member"}.`;
+  return `This page belongs to ${ownerDisplayName ?? compactId(ownerPrincipalId)}.`;
 }
