@@ -199,19 +199,23 @@ export class SqliteIdentityRepository implements BootstrapManagedApiKeyRepositor
     const ids = [...new Set(principalIds)];
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => "?").join(", ");
-    // Members first, then service keys oldest to newest, so the newest key's
-    // name wins for a rotated service principal.
+    // Members first, then service keys oldest to newest (key id breaks ties),
+    // so the newest key's name wins for a rotated service principal. A
+    // display name that is the member's email counts as no name: sign-in
+    // stores the email there when the provider sends no name.
     const rows = this.#database.prepare(`
       SELECT principalId, displayName FROM (
-        SELECT id AS principalId, display_name AS displayName, 0 AS source, created_at AS createdAt
+        SELECT id AS principalId, display_name AS displayName, 0 AS source,
+          created_at AS createdAt, id AS tieBreaker
         FROM installation_members
         WHERE installation_id = ? AND id IN (${placeholders})
+          AND lower(trim(display_name)) <> lower(trim(email))
         UNION ALL
-        SELECT principal_id, name, 1, created_at
+        SELECT principal_id, name, 1, created_at, id
         FROM managed_api_keys
         WHERE installation_id = ? AND principal_kind = 'service' AND principal_id IN (${placeholders})
       )
-      ORDER BY source ASC, createdAt ASC
+      ORDER BY source ASC, createdAt ASC, tieBreaker ASC
     `).all(installationId, ...ids, installationId, ...ids);
     const names = new Map<string, string>();
     for (const row of rows) {

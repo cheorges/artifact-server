@@ -201,7 +201,7 @@ The mutation policy is separate from the read settings. A restricted artifact na
 | Change account required/public link | Yes | Only with management capability |
 | Delete the artifact | Yes | Only with management capability |
 
-Artifact lists, artifact details, and artifact activity name the owner and each action's actor: a member by their display name, a service key by its name. They never show an email address, and a member keeps their name after deactivation. A list can be narrowed to the caller's own artifacts with the scope `mine` through HTTP, MCP, and the web interface's Mine filter.
+Artifact lists, artifact details, and artifact activity name the owner and each action's actor: a member by their display name, a service key by its name. They never show an email address, not even a display name that is one, and a member keeps their name after deactivation. If the names cannot be read, the answer comes without them. A list can be narrowed to the caller's own artifacts with the scope `mine` through HTTP, MCP, and the web interface's Mine filter.
 
 An interactive agent acts as the signed-in person. An API key belongs to one named user or service principal, one installation, an expiry and revoke state, and explicit capabilities. Rotating a key replaces its credential record and secret without changing that principal or the administrator who authorized it. A key with artifact access can use any project in that installation; projects do not add a second access-control list. Every mutation records the effective principal and, when present, the human who authorized the agent connection.
 

@@ -1,4 +1,3 @@
-import {createHash} from "node:crypto";
 import {mkdtemp, rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
@@ -8,7 +7,6 @@ import {afterEach, beforeEach, describe, expect, test} from "vitest";
 
 import {ArtifactManagementService} from "../../src/application/artifact-management.js";
 import type {ApplicationRuntime} from "../../src/application/application-runtime.js";
-import {StagedUploadService} from "../../src/application/staged-upload.js";
 import {
   membershipRoles,
   principalCapabilities,
@@ -25,6 +23,7 @@ import {LocalBlobStore} from "../../src/storage/local-blob-store.js";
 import {LocalStagingStore} from "../../src/storage/local-staging-store.js";
 import {SqliteArtifactRepository} from "../../src/storage/sqlite-artifact-repository.js";
 import {SqliteIdentityRepository} from "../../src/storage/sqlite-identity-repository.js";
+import {publishInProcess} from "../support/in-process-publishing.js";
 
 const principal: Principal = {
   authorizedByPrincipalId: null,
@@ -103,7 +102,11 @@ describe("access change racing another access change", () => {
   });
 
   test("AUTH-034 foundation: a change that ends a public link committed after the service's first read still warns", async () => {
-    const published = await publish();
+    const published = await publishInProcess(runtime, {
+      idempotencyKey: "access-race-publish-fixture",
+      name: "Access race fixture",
+      principal,
+    });
     repository.beforeNextChange = async () => {
       await repository.changeAccessSetting({
         accessSetting: "public_link",
@@ -148,50 +151,4 @@ describe("access change racing another access change", () => {
     expect(replay.previousAccessSetting).toBeNull();
     expect(replay.mayHaveEndedPublicLink).toBe(true);
   });
-
-  async function publish() {
-    const bytes = new TextEncoder().encode("<!doctype html><title>Race</title>");
-    const upload = await runtime.runPromise(
-      StagedUploadService.use((stagedUploads) => stagedUploads.createUpload({
-        entryPath: "index.html",
-        files: [{
-          mediaType: "text/html; charset=utf-8",
-          path: "index.html",
-          sha256: createHash("sha256").update(bytes).digest("hex"),
-          size: bytes.byteLength,
-        }],
-        principal,
-        projectId: null,
-      })),
-    );
-    const file = upload.files[0];
-    if (file === undefined) throw new Error("The race fixture upload has no file.");
-    await runtime.runPromise(
-      StagedUploadService.use((stagedUploads) => stagedUploads.uploadFile({
-        body: new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(bytes);
-            controller.close();
-          },
-        }),
-        principal,
-        projectId: null,
-        storageToken: file.storageToken,
-        uploadId: upload.id,
-      })),
-    );
-    return runtime.runPromise(
-      StagedUploadService.use((stagedUploads) => stagedUploads.commitUpload({
-        idempotencyKey: "access-race-publish-fixture",
-        principal,
-        projectId: null,
-        target: {
-          accessSetting: "account_required",
-          kind: "new_artifact",
-          name: "Access race fixture",
-        },
-        uploadId: upload.id,
-      })),
-    );
-  }
 });

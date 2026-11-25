@@ -452,20 +452,24 @@ export function createD1IdentityRepository(
       // One JSON parameter for every id: D1 binds at most 100 parameters per
       // statement, and a page can name up to 100 principals.
       const idsJson = JSON.stringify(ids);
-      // Members first, then service keys oldest to newest, so the newest key's
-      // name wins for a rotated service principal.
+      // Members first, then service keys oldest to newest (key id breaks ties),
+      // so the newest key's name wins for a rotated service principal. A
+      // display name that is the member's email counts as no name: sign-in
+      // stores the email there when the provider sends no name.
       const result = await database.prepare(`
         SELECT principalId, displayName FROM (
-          SELECT id AS principalId, display_name AS displayName, 0 AS source, created_at AS createdAt
+          SELECT id AS principalId, display_name AS displayName, 0 AS source,
+            created_at AS createdAt, id AS tieBreaker
           FROM installation_members
           WHERE installation_id = ? AND id IN (SELECT value FROM json_each(?))
+            AND lower(trim(display_name)) <> lower(trim(email))
           UNION ALL
-          SELECT principal_id, name, 1, created_at
+          SELECT principal_id, name, 1, created_at, id
           FROM managed_api_keys
           WHERE installation_id = ? AND principal_kind = 'service'
             AND principal_id IN (SELECT value FROM json_each(?))
         )
-        ORDER BY source ASC, createdAt ASC
+        ORDER BY source ASC, createdAt ASC, tieBreaker ASC
       `).bind(installationId, idsJson, installationId, idsJson)
         .all<z.input<typeof principalNameRowSchema>>();
       const names = new Map<string, string>();

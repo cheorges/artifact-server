@@ -187,19 +187,23 @@ export class PostgresIdentityRepository implements BootstrapManagedApiKeyReposit
     if (ids.length === 0) return [];
     return this.#database.run(Effect.gen(function*() {
       const sql = yield* SqlClient;
-      // Members first, then service keys oldest to newest, so the newest key's
-      // name wins for a rotated service principal.
+      // Members first, then service keys oldest to newest (key id breaks ties),
+      // so the newest key's name wins for a rotated service principal. A
+      // display name that is the member's email counts as no name: sign-in
+      // stores the email there when the provider sends no name.
       const rows = yield* sql.unsafe<object>(
         `SELECT "principalId", "displayName" FROM (
-           SELECT id AS "principalId", display_name AS "displayName", 0 AS source, created_at
+           SELECT id AS "principalId", display_name AS "displayName", 0 AS source,
+             created_at, id AS tie_breaker
            FROM installation_members
            WHERE installation_id = $1 AND id = ANY($2::text[])
+             AND lower(btrim(display_name)) <> lower(btrim(email))
            UNION ALL
-           SELECT principal_id, name, 1, created_at
+           SELECT principal_id, name, 1, created_at, id
            FROM managed_api_keys
            WHERE installation_id = $1 AND principal_kind = 'service' AND principal_id = ANY($2::text[])
          ) AS names
-         ORDER BY source ASC, created_at ASC`,
+         ORDER BY source ASC, created_at ASC, tie_breaker ASC`,
         [installationId, ids],
       );
       const names = new Map<string, string>();

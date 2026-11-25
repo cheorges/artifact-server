@@ -50,7 +50,12 @@ const echoSchema = z.object({
 });
 
 const listSchema = z.object({
-  artifacts: z.array(z.object({currentVersionId: z.string(), id: z.string(), name: z.string()})),
+  artifacts: z.array(z.object({
+    currentVersionId: z.string(),
+    id: z.string(),
+    name: z.string(),
+    ownerDisplayName: z.string().nullable(),
+  })),
   nextCursor: z.string().nullable(),
 });
 
@@ -169,6 +174,14 @@ test.describe("WMC-001 WebMCP review tools", () => {
       // list_artifacts is project-scoped, and open returns the new view.
       const listed = listSchema.parse(await callTool(page, "artifact_server_list_artifacts"));
       expect(listed.artifacts.map((artifact) => artifact.id)).toContain(artifactId);
+      // The test installation's token published it. It is not a stored key or
+      // member, so its owner has no name, and it is not the signed-in person.
+      expect(listed.artifacts.find((artifact) => artifact.id === artifactId)?.ownerDisplayName)
+        .toBeNull();
+      const mine = listSchema.parse(
+        await callTool(page, "artifact_server_list_artifacts", {scope: "mine"}),
+      );
+      expect(mine.artifacts).toEqual([]);
       const opened = viewSchema.parse(await callTool(page, "artifact_server_open", {
         artifactId,
         versionId: published.version.id,

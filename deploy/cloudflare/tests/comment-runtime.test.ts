@@ -491,11 +491,13 @@ describe("Cloudflare D1 comments", () => {
           "UPDATE artifacts SET owner_principal_id = ? WHERE id = ?",
         );
         for (const [index, publication] of published.entries()) {
+          // Member 0 has its email as display name, as sign-in stores it when
+          // the provider sends no name; it must not be shown.
           admit.run(
             `member_${index}`,
             installationId,
             `member-${index}@example.test`,
-            `Member ${index}`,
+            index === 0 ? "Member-0@Example.test" : `Member ${index}`,
           );
           handOver.run(`member_${index}`, publication.artifact.id);
         }
@@ -514,7 +516,10 @@ describe("Cloudflare D1 comments", () => {
       }).parse(await response.json());
       expect(listed.artifacts).toHaveLength(ownerCount);
       expect(new Set(listed.artifacts.map(({ownerDisplayName}) => ownerDisplayName)))
-        .toEqual(new Set(Array.from({length: ownerCount}, (_, index) => `Member ${index}`)));
+        .toEqual(new Set(Array.from(
+          {length: ownerCount},
+          (_, index) => index === 0 ? null : `Member ${index}`,
+        )));
     } finally {
       await manyWorker.stop();
       await rm(manyDirectory, {force: true, recursive: true});

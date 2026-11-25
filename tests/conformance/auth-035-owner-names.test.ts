@@ -171,19 +171,26 @@ describe("owner and actor names", () => {
     expect(mcpGet.ownerDisplayName).toBe("Ada Lovelace");
   });
 
-  test("AUTH-035-F: names never reveal email addresses, survive deactivation, scope=mine never widens other filters, and an unknown scope is refused", async () => {
+  test("AUTH-035-F: names never reveal email addresses, even a display name that is the email, survive deactivation, scope=mine never widens other filters, and an unknown scope is refused", async () => {
     const adaPage = await publishAs(ada, "Ada's tagged page", ["team"]);
     await publishAs(ben, "Ben's tagged page", ["team"]);
     await publishAs(ben, "Ben's other page");
+    // Sign-in stores the email as the display name when the provider sends no name.
+    const carol = await memberWithKey("Carol@Example.test", "carol@example.test");
+    const carolPage = await publishAs(carol, "Carol's page");
 
     const responses = await Promise.all([
       fetch(`${server.baseUrl}/api/v1/artifacts`, {headers: headersFor(ben)}),
       fetch(`${server.baseUrl}/api/v1/artifacts/${adaPage.id}`, {headers: headersFor(ben)}),
       fetch(`${server.baseUrl}/api/v1/artifacts/${adaPage.id}/actions`, {headers: headersFor(ben)}),
+      fetch(`${server.baseUrl}/api/v1/artifacts/${carolPage.id}`, {headers: headersFor(ben)}),
+      fetch(`${server.baseUrl}/api/v1/artifacts/${carolPage.id}/actions`, {headers: headersFor(ben)}),
     ]);
     const bodies = await Promise.all(responses.map((response) => response.text()));
-    for (const body of bodies) expect(body).not.toContain("@example.test");
-    expect(JSON.stringify(await callTool(ben, "artifact_list", {}))).not.toContain("@example.test");
+    for (const body of bodies) expect(body.toLowerCase()).not.toContain("@example.test");
+    expect(detailsSchema.parse(JSON.parse(bodies[3] ?? "")).ownerDisplayName).toBeNull();
+    expect(JSON.stringify(await callTool(ben, "artifact_list", {})).toLowerCase())
+      .not.toContain("@example.test");
 
     const deactivated = await fetch(
       `${server.baseUrl}/api/v1/members/${ada.memberId}/deactivate`,

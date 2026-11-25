@@ -274,7 +274,6 @@ export type ArtifactManagementFailure =
   | InvalidPagination
   | AuthorizationDenied
   | ArtifactRepositoryFailure
-  | IdentityRepositoryFailure
   | ProjectManagementFailure;
 
 interface ArtifactManagementOperations {
@@ -390,6 +389,8 @@ function makeArtifactManagementService(
     return yield* new ArtifactNotFound({message: "The artifact does not exist."});
   });
 
+  // Names only label artifacts, so a failed lookup answers without them (the
+  // interface then shows short ids) instead of failing the whole request.
   const displayNames = Effect.fn("ArtifactManagementService.displayNames")(
     function*(principal: Principal, principalIds: readonly (string | null)[]) {
       const ids = [...new Set(principalIds.filter((id) => id !== null))];
@@ -397,6 +398,12 @@ function makeArtifactManagementService(
       return yield* dependencies.principalNames.findDisplayNames(
         principal.installationId,
         ids,
+      ).pipe(
+        Effect.catchTag("IdentityRepositoryFailure", (failure) =>
+          Effect.logWarning(
+            "Owner and actor names could not be read; answering without them.",
+            failure.cause,
+          ).pipe(Effect.as(new Map<string, string>()))),
       );
     },
   );

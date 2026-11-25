@@ -2268,7 +2268,21 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
         "member_ada",
         "2026-11-02T00:00:00.000Z",
       );
-      const serviceKey = (id: string, name: string, createdAt: string) => ({
+      // Sign-in stores the email as the display name when the provider sends none.
+      await identities.admitMember({
+        createdAt: "2026-11-01T00:00:00.000Z",
+        displayName: " Carol@Example.test ",
+        email: "carol@example.test",
+        id: "member_carol",
+        installationId: ownerIdentity.installationId,
+        role: "member",
+      });
+      const serviceKey = (
+        id: string,
+        name: string,
+        createdAt: string,
+        principalId = "service_bot",
+      ) => ({
         authorizedByPrincipalId: "member_ada",
         capabilities: [],
         createdAt,
@@ -2277,7 +2291,7 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
         installationId: ownerIdentity.installationId,
         name,
         prefix: `prefix_${id}`,
-        principalId: "service_bot",
+        principalId,
         principalKind: "service",
         revokedAt: null,
         rotatedFromId: null,
@@ -2289,15 +2303,23 @@ describe.sequential("external-storage Postgres and S3 runtime", () => {
       await identities.createApiKey(
         serviceKey("key_new", "Release bot", "2026-11-03T00:00:00.000Z"),
       );
+      // Two keys created at the same instant: the key id decides.
+      await identities.createApiKey(
+        serviceKey("key_tie_b", "Tie B", "2026-11-04T00:00:00.000Z", "service_tie"),
+      );
+      await identities.createApiKey(
+        serviceKey("key_tie_a", "Tie A", "2026-11-04T00:00:00.000Z", "service_tie"),
+      );
       const names = await identities.findPrincipalDisplayNames(
         ownerIdentity.installationId,
-        ["member_ada", "service_bot", "member_unknown", "member_ada"],
+        ["member_ada", "service_bot", "member_unknown", "member_ada", "member_carol", "service_tie"],
       );
       expect(names.toSorted((left, right) =>
         left.principalId.localeCompare(right.principalId)
       )).toEqual([
         {displayName: "Ada Lovelace", principalId: "member_ada"},
         {displayName: "Release bot", principalId: "service_bot"},
+        {displayName: "Tie B", principalId: "service_tie"},
       ]);
       expect(await identities.findPrincipalDisplayNames(
         ownerIdentity.installationId,

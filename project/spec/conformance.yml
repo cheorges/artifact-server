@@ -1815,15 +1815,15 @@ requirements:
 
   - id: AUTH-035
     kind: behavior
-    behavior: Artifact listings, artifact details, and artifact activity name the artifact's owner and each action's actor by the member's display name or the service key's name, never by email address, and a list scope of mine keeps only the caller's own artifacts through HTTP, MCP, and the web interface.
+    behavior: Artifact listings, artifact details, and artifact activity name the artifact's owner and each action's actor by the member's display name or the service key's name, never by email address, so a display name that is the member's email counts as no name. A failed name lookup answers without names instead of failing, and a list scope of mine keeps only the caller's own artifacts through HTTP, MCP, WebMCP, and the web interface.
     owner: authorization
     source: {file: artifact-server-product-spec.html, anchor: owner-names}
     acceptance:
       behavior: {id: AUTH-035-B, description: "Members and a service key publish; the HTTP list, details, and activity and the MCP list and get answer each owner's and actor's name, and scope mine over HTTP and MCP lists only the caller's own artifacts."}
-      failure: {id: AUTH-035-F, description: "No answer carries an email address, a deactivated owner keeps their name, scope mine combined with a tag or search never lists another member's artifact, and an unknown scope is refused over HTTP and MCP."}
+      failure: {id: AUTH-035-F, description: "No answer carries an email address, not even for a member whose display name is their email, a deactivated owner keeps their name, scope mine combined with a tag or search never lists another member's artifact, and an unknown scope is refused over HTTP and MCP."}
     deployments: *all
     status: implementing
-    proof_gap: AUTH-035-B and AUTH-035-F run against the local SQLite server, the browser test proves the catalog, Details, Activity, and the Mine filter in Chromium, and Postgres and D1 runtime tests cover the name lookup, rotated service keys, and the owner filter. No deployment-specific evidence is recorded.
+    proof_gap: AUTH-035-B and AUTH-035-F run against the local SQLite server; a service test proves the answer without names when the lookup fails; browser tests prove the catalog, Details, Activity, the Mine filter, and the WebMCP list in Chromium; and Postgres and D1 runtime tests cover the name lookup, rotated service keys and their tie-break, a display name that is the email, the owner filter, and a D1 page of 55 owners. Accepted, not tested beyond WebMCP. On a single-person local installation, mine lists what the signed-in person published, not what the CLI's own service key published. No deployment-specific evidence is recorded.
     depends_on: [AUTH-030]
     evidence: []
 

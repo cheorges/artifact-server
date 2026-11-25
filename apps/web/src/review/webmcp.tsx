@@ -382,17 +382,22 @@ function reviewTools(ref: BindingsRef): readonly ModelContextToolLike[] {
       annotations: {readOnlyHint: true},
       description:
         `${provenance} List the current project's artifacts with their `
-        + "current version ids, for choosing what to open.",
-      execute: async () => {
+        + "current version ids and owners, for choosing what to open. Use "
+        + "scope mine for only the signed-in person's own artifacts.",
+      execute: async (input) => {
+        const {scope} = parseInput(listInputSchema, input);
         const snapshot = await settledSnapshot(ref);
         if (snapshot.projectId === "") throw new Error("No project is open.");
         try {
-          const page = await api.artifacts(snapshot.projectId, null, [], "");
+          const page = await api.artifacts(snapshot.projectId, null, [], "", {
+            scope: scope ?? "all",
+          });
           return {
-            artifacts: page.artifacts.map(({artifact, versionCount}) => ({
+            artifacts: page.artifacts.map(({artifact, ownerDisplayName, versionCount}) => ({
               currentVersionId: artifact.currentVersionId,
               id: artifact.id,
               name: artifact.name,
+              ownerDisplayName,
               tags: artifact.tags,
               versionCount,
             })),
@@ -401,6 +406,16 @@ function reviewTools(ref: BindingsRef): readonly ModelContextToolLike[] {
         } catch (caught) {
           throw describeFailure("Listing artifacts", caught instanceof Error ? caught : new Error("The tool call failed."));
         }
+      },
+      inputSchema: {
+        properties: {
+          scope: {
+            description: "all (default) or mine, the signed-in person's own artifacts.",
+            enum: ["all", "mine"],
+            type: "string",
+          },
+        },
+        type: "object",
       },
       name: "artifact_server_list_artifacts",
       title: "List artifacts",
@@ -539,6 +554,9 @@ function stateTool(
   };
 }
 
+const listInputSchema = z.object({
+  scope: z.enum(["all", "mine"]).optional(),
+}).loose();
 const viewInputSchema = z.object({
   cursor: z.string().optional(),
   limit: z.number().optional(),

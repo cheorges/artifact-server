@@ -97,8 +97,9 @@ export interface IdentityRepository {
   /**
    * Find the shown name of each listed principal: a member's display name,
    * deactivated members included, or a service key's name, the newest key's
-   * when it was rotated. Unknown ids are left out; email addresses never are
-   * returned.
+   * when it was rotated (key id breaks a tie). Unknown ids are left out, and
+   * so is a member whose display name is their email, which sign-in stores
+   * when the provider sends no name: email addresses are never returned.
    */
   findPrincipalDisplayNames(
     installationId: string,
