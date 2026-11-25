@@ -431,6 +431,17 @@ export function createD1IdentityRepository(
       return row === null ? null : memberRowSchema.parse(row);
     },
 
+    findExternalSubject: async (installationId, provider, memberId) => {
+      const row = await database.prepare(`
+        SELECT external.subject
+        FROM external_identities AS external
+        JOIN installation_members AS member ON member.id = external.member_id
+        WHERE member.installation_id = ? AND external.provider = ?
+          AND external.member_id = ?
+      `).bind(installationId, provider, memberId).first<{subject: string}>();
+      return row === null ? null : row.subject;
+    },
+
     findMemberByExternalIdentity: async (installationId, provider, subject) => {
       const row = await database.prepare(`
         SELECT member.id, member.installation_id AS installationId,

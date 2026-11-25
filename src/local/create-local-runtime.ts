@@ -8,6 +8,7 @@ import type {
   ExternalMcpBearerVerifier,
 } from "../application/authentication.js";
 import type { InteractiveIdentityProvider } from "../application/interactive-login.js";
+import type {GroupSharingConfiguration} from "../core/group-directory.js";
 import type { Clock } from "../core/ports.js";
 import type {BrowserAccess} from "../core/browser-access.js";
 import type {ExternalIdentityAdmissionPolicy} from "../core/installation-identity.js";
@@ -104,6 +105,8 @@ export interface LocalRuntimeConfig {
   readonly gitHistoryHealthProbe?: GitHistoryProviderHealthProbe;
   /** Complete provider seam for conformance tests; production composes REST and Git. */
   readonly gitHistoryProvider?: GitHistoryProvider;
+  /** The installation's directory of groups; absent leaves group sharing off. */
+  readonly groupSharing?: GroupSharingConfiguration;
   readonly interactiveIdentityProvider?: InteractiveIdentityProvider;
   /** Linked-artifact capability switch; absent or "off" leaves it disabled. */
   readonly linkedFiles?: "off" | "on";
@@ -237,6 +240,7 @@ export async function createLocalRuntime(
     identityRepository,
     installationId,
     gitHistory: {read: () => applicationGitHistory.read()},
+    groupSharing: config.groupSharing,
     interactiveIdentityProvider: config.interactiveIdentityProvider ?? null,
     localBootstrapCredential: config.localBootstrapToken === undefined
       ? null
@@ -310,6 +314,7 @@ export async function createLocalRuntime(
       contentDomain: config.contentDomain,
       gitHistory: gitHistoryMonitor?.reader ??
         fixedGitHistoryCapabilityReader(gitHistory.capability),
+      groupSharing: config.groupSharing !== undefined,
       linkedArtifacts: linkedFilesEnabled,
       publicLinks,
       trustedApplicationOrigin: config.applicationOrigin ?? null,

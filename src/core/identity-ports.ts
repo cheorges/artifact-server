@@ -79,6 +79,15 @@ export interface IdentityRepository {
     tokenDigest: string,
     requestTime: string,
   ): Promise<ApplicationSession | null>;
+  /**
+   * The subject one identity provider bound to a member, or null when the
+   * member never signed in through it.
+   */
+  findExternalSubject(
+    installationId: string,
+    provider: string,
+    memberId: string,
+  ): Promise<string | null>;
   findMember(
     installationId: string,
     memberId: string,

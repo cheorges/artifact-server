@@ -254,10 +254,18 @@ const changeAccessSchema = z.object({
 });
 /** At most as many addresses per side as one artifact can hold grants. */
 const grantAddressesSchema = z.array(z.string().max(320)).max(100).default([]);
+/** A directory group named by its id and its exact name. */
+const grantGroupsSchema = z.array(z.object({
+  id: z.string().min(1).max(200),
+  name: z.string().min(1).max(256),
+}).strict()).max(100).default([]);
 const changeGrantsSchema = z.object({
   add: grantAddressesSchema,
+  addGroups: grantGroupsSchema,
   remove: grantAddressesSchema,
+  removeGroups: grantGroupsSchema,
 }).strict();
+const groupSearchQuerySchema = z.object({query: z.string().max(400).default("")});
 const changeTagsSchema = z.object({
   expectedCurrentVersionId: z.string().min(1).max(200),
   tags: artifactTagsSchema,
@@ -503,6 +511,11 @@ export interface HttpAppDependencies {
   /** Secret-free optional Git state exposed through authenticated discovery. */
   readonly gitHistory?: GitHistoryCapabilityReader;
   /**
+   * Advertises that artifacts can be shared with directory groups (decision
+   * 0034). The application service is the enforcing guard.
+   */
+  readonly groupSharing?: boolean;
+  /**
    * Advertises the linked-artifact capability (local deployment with
    * `ARTIFACT_SERVER_LINKED_FILES=on`). The enabled application service is
    * the enforcing guard; this flag only shapes discovery and fast gating.
@@ -584,6 +597,7 @@ export function createHttpApp(
     applicationRuntime: dependencies.applicationRuntime,
     contentDomain: dependencies.contentDomain,
     gitHistory,
+    groupSharing: dependencies.groupSharing === true,
     linkedArtifacts: dependencies.linkedArtifacts === true,
     mode: dependencies.trustedApplicationOrigin === null ? "local" : "remote",
     oauthResource: dependencies.mcpOAuthResource?.resource ?? null,
@@ -1073,6 +1087,7 @@ export function createHttpApp(
       authenticationMethod: context.get("authenticationMethod"),
       capabilities: {
         gitHistory: gitHistory.read(),
+        groupSharing: dependencies.groupSharing === true,
         linkedArtifacts: dependencies.linkedArtifacts === true,
         publicLinks: publicLinks === publicLinkPolicies.on,
       },
@@ -2171,16 +2186,31 @@ export function createHttpApp(
         ArtifactManagementService.use((management) =>
           management.changeGrants({
             add: body.add,
+            addGroups: body.addGroups,
             artifactId: context.req.param("artifactId"),
             principal: context.get("principal"),
             projectId: requestedProjectId(context),
             remove: body.remove,
+            removeGroups: body.removeGroups,
           })
         ),
       );
       return context.json(grants);
     },
   );
+
+  app.get("/api/v1/directory/groups", async (context) => {
+    const {query} = groupSearchQuerySchema.parse(context.req.query());
+    const groups = await runHttpApplicationEffect(
+      context,
+      dependencies,
+      ArtifactManagementService.use((management) =>
+        management.searchGroups({principal: context.get("principal"), query})
+      ),
+    );
+    context.header("Cache-Control", "private, no-store");
+    return context.json({groups});
+  });
 
   app.patch(
     "/api/v1/artifacts/:artifactId/tags",

@@ -26,6 +26,7 @@ import type {
   ApiOAuthResourceConfiguration,
   McpOAuthResourceConfiguration,
 } from "../../src/http/create-http-app.js";
+import type {GroupSharingConfiguration} from "../../src/core/group-directory.js";
 import type {Clock} from "../../src/core/ports.js";
 import type {ExternalIdentityAdmissionPolicy} from "../../src/core/installation-identity.js";
 import {localOwnerBrowserAccess} from "../../src/core/browser-access.js";
@@ -125,6 +126,7 @@ export async function startTestServer(
     readonly gitHistory?: NodeGitHistoryConfiguration;
     readonly gitHistoryHealthProbe?: GitHistoryProviderHealthProbe;
     readonly gitHistoryProvider?: GitHistoryProvider;
+    readonly groupSharing?: GroupSharingConfiguration;
     readonly hostname?: string;
     readonly interactiveIdentityProvider?: InteractiveIdentityProvider;
     readonly linkedFiles?: "off" | "on";
@@ -226,6 +228,9 @@ export async function startTestServer(
   }
   if (options.publicLinks !== undefined) {
     config = {...config, publicLinks: options.publicLinks};
+  }
+  if (options.groupSharing !== undefined) {
+    config = {...config, groupSharing: options.groupSharing};
   }
   if (options.webAssetsRoot !== undefined) {
     config = {...config, webAssetsRoot: options.webAssetsRoot};

@@ -29,8 +29,11 @@ import {
 } from "../application/artifact-comments.js";
 import {
   type ArtifactManagementDependencies,
+  type GroupSharing,
   ArtifactManagementService,
 } from "../application/artifact-management.js";
+import {createGroupMembership} from "../application/group-membership.js";
+import type {GroupSharingConfiguration} from "../core/group-directory.js";
 import type {ArtifactGrantLookup} from "../application/artifact-visibility-check.js";
 import { AuthorizationService } from "../application/authorization.js";
 import {
@@ -87,6 +90,7 @@ import {
   BlobStorageFailure,
   CommentNotFound,
   CommentResolved,
+  DirectoryUnavailable,
   DispatchStateConflict,
   GrantLimitReached,
   IdempotencyConflict,
@@ -171,6 +175,8 @@ export interface ApplicationAdapters {
   readonly interactiveIdentityProvider: InteractiveIdentityProvider | null;
   /** Live optional-provider state used to guard project enablement. */
   readonly gitHistory?: GitHistoryCapabilityReader;
+  /** The installation's directory of groups; absent leaves group sharing off. */
+  readonly groupSharing?: GroupSharingConfiguration | undefined;
   /** Optional managed provider used only after application authorization. */
   readonly gitHistoryProvider?: GitHistoryProvider;
   /**
@@ -240,12 +246,38 @@ export function createApplicationLayer(
     now: Effect.sync(() => DateTime.makeUnsafe(adapters.clock.now())),
   };
   const publicLinks = adapters.publicLinks ?? publicLinkPolicies.on;
-  // One grant lookup for every service that decides restricted visibility.
+  const groupSharing = adapters.groupSharing ?? null;
+  const groupMembership = createGroupMembership({
+    directory: groupSharing?.directory ?? null,
+    now: () => adapters.clock.now().getTime(),
+    subjectOf: (principalId) => groupSharing === null
+      ? Promise.resolve(null)
+      : adapters.identityRepository.findExternalSubject(
+        adapters.installationId,
+        groupSharing.identityProvider,
+        principalId,
+      ),
+  });
+  // One grant lookup for every service that decides restricted visibility:
+  // a grant by address, or a grant to one of the caller's directory groups.
   const grants: ArtifactGrantLookup = {
-    isArtifactGrantee: (projectId, artifactId, principalId) => Effect.tryPromise({
-      try: () => adapters.repository.isArtifactGrantee(projectId, artifactId, principalId, []),
-      catch: (cause) => repositoryFailure("isArtifactGrantee", cause),
-    }),
+    isArtifactGrantee: (projectId, artifactId, principalId) =>
+      groupMembership.groupIdsOf(principalId).pipe(
+        Effect.flatMap((groupIds) => Effect.tryPromise({
+          try: () => adapters.repository.isArtifactGrantee(projectId, artifactId, principalId, groupIds),
+          catch: (cause) => repositoryFailure("isArtifactGrantee", cause),
+        })),
+      ),
+  };
+  const groups: GroupSharing = {
+    available: groupSharing !== null,
+    findGroup: (groupId) => directoryEffect(() =>
+      groupSharing === null ? Promise.resolve(null) : groupSharing.directory.findGroup(groupId)
+    ),
+    groupIdsOf: groupMembership.groupIdsOf,
+    searchGroups: (query) => directoryEffect(() =>
+      groupSharing === null ? Promise.resolve([]) : groupSharing.directory.searchGroups(query)
+    ),
   };
   const publishDependencies: PublishArtifactDependencies = {
     grants,
@@ -499,6 +531,7 @@ export function createApplicationLayer(
   };
   const managementDependencies: ArtifactManagementDependencies = {
     grants,
+    groups,
     clock,
     principalNames: {
       findDisplayNames: (installationId, principalIds) =>
@@ -1230,6 +1263,14 @@ function combineAbortSignals(
   return deadlineSignal === undefined
     ? fiberSignal
     : AbortSignal.any([fiberSignal, deadlineSignal]);
+}
+
+/** Run one directory call; anything it rejects with is "directory unavailable". */
+function directoryEffect<A>(run: () => Promise<A>): Effect.Effect<A, DirectoryUnavailable> {
+  return Effect.tryPromise({
+    try: run,
+    catch: () => new DirectoryUnavailable({message: "The directory cannot be reached. Try again in a moment."}),
+  });
 }
 
 function identityEffect<A>(

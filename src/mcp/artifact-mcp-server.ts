@@ -144,6 +144,15 @@ const artifactGrantListSchema = z.object({
   grants: z.array(artifactGrantSchema),
 }).strict();
 const grantAddressesSchema = z.array(z.string().max(320)).max(100).default([]);
+const grantGroupsSchema = z.array(z.object({
+  id: z.string().min(1).max(200),
+  name: z.string().min(1).max(256),
+}).strict()).max(100).default([]);
+const directoryGroupSchema = z.object({
+  displayName: z.string(),
+  id: z.string(),
+  mail: z.string().nullable(),
+}).strict();
 const artifactRecordSchema = z.object({
   accessSetting: accessSettingSchema,
   createdAt: z.string(),
@@ -398,6 +407,8 @@ export interface ArtifactMcpServerDependencies {
   readonly contentDomain: string;
   /** Secret-free optional Git state exposed by capability discovery. */
   readonly gitHistory: GitHistoryCapability;
+  /** Advertises sharing with directory groups in discovery (decision 0034). */
+  readonly groupSharing?: boolean;
   /** Advertises the local linked-artifact capability in discovery. */
   readonly linkedArtifacts?: boolean;
   readonly mode: "local" | "remote";
@@ -630,7 +641,7 @@ export function createArtifactMcpServer(
           omittedProjectRule: z.string(),
           scope: z.literal("project"),
         }),
-        sharing: z.object({modes: z.array(accessSettingSchema)}),
+        sharing: z.object({groups: z.boolean(), modes: z.array(accessSettingSchema)}),
       }),
       annotations: readOnlyAnnotations,
     },
@@ -640,6 +651,7 @@ export function createArtifactMcpServer(
         dependencies.linkedArtifacts === true,
         dependencies.gitHistory,
         dependencies.publicLinks ?? publicLinkPolicies.on,
+        dependencies.groupSharing === true,
       ),
       "Artifact Server publishes actual files through an upload plan. It does not accept inline HTML, CSS, JavaScript, or base64 content."),
   );
@@ -1380,14 +1392,16 @@ export function createArtifactMcpServer(
   registerNudgedTool(
     "artifact_set_grants",
     {
-      title: "Share a restricted artifact with people",
+      title: "Share a restricted artifact with people and groups",
       description:
-        "Add or remove people, by exact email address, who may find, open, and comment on a restricted artifact. Only the owner or an administrator can change grants. Grants apply only while the artifact's access setting is restricted; call artifact_set_visibility with restricted to narrow access. People who are not members yet get access once they sign in with that email. Removing a person ends their access at once.",
+        "Add or remove people, by exact email address, and directory groups, who may find, open, and comment on a restricted artifact. Only the owner or an administrator can change grants. Grants apply only while the artifact's access setting is restricted; call artifact_set_visibility with restricted to narrow access. People who are not members yet get access once they sign in with that email. Removing a person or a group ends their access at once. Name a group in addGroups or removeGroups by the exact id and name artifact_group_search returned and the person chose; never guess either, a name that is not the group's own is refused. Groups need an installation whose artifact_capabilities report sharing.groups.",
       inputSchema: z.object({
         add: grantAddressesSchema,
+        addGroups: grantGroupsSchema,
         artifactId: artifactIdSchema,
         projectId: optionalProjectIdSchema,
         remove: grantAddressesSchema,
+        removeGroups: grantGroupsSchema,
       }).strict(),
       outputSchema: artifactGrantListSchema,
       annotations: idempotentWriteAnnotations,
@@ -1398,14 +1412,37 @@ export function createArtifactMcpServer(
         ArtifactManagementService.use((management) =>
           management.changeGrants({
             add: input.add,
+            addGroups: input.addGroups,
             artifactId: input.artifactId,
             principal: identity.principal,
             projectId: input.projectId,
             remove: input.remove,
+            removeGroups: input.removeGroups,
           })
         ),
       );
       return {active: changed.active, grants: [...changed.grants]};
+    }),
+  );
+
+  registerNudgedTool(
+    "artifact_group_search",
+    {
+      title: "Find directory groups to share with",
+      description:
+        "Find groups of the installation's directory by the start of a word of their name, or by their exact mail address. Returns at most 10 groups with id, name, and mail address, never members. Show the person the exact names and let them choose before sharing with artifact_set_grants. Needs an installation whose artifact_capabilities report sharing.groups.",
+      inputSchema: z.object({query: z.string().max(400)}).strict(),
+      outputSchema: z.object({groups: z.array(directoryGroupSchema)}).strict(),
+      annotations: readOnlyAnnotations,
+    },
+    async (input) => toolResult(async () => {
+      const groups = await runMcpApplicationEffect(
+        dependencies,
+        ArtifactManagementService.use((management) =>
+          management.searchGroups({principal: identity.principal, query: input.query})
+        ),
+      );
+      return {groups: [...groups]};
     }),
   );
 
@@ -2421,6 +2458,7 @@ function capabilities(
   linkedArtifacts: boolean,
   gitHistory: GitHistoryCapability,
   publicLinks: PublicLinkPolicy,
+  groupSharing: boolean,
 ) {
   return {
     gitHistory,
@@ -2457,6 +2495,7 @@ function capabilities(
       scope: "project" as const,
     },
     sharing: {
+      groups: groupSharing,
       modes: [
         accessSettings.accountRequired,
         ...(publicLinks === publicLinkPolicies.on ? [accessSettings.publicLink] : []),

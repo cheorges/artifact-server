@@ -25,7 +25,11 @@ import {
   type ArtifactMutationConflict,
   type ArtifactRepositoryFailure,
   AuthorizationDenied,
+  type DirectoryUnavailable,
   type GrantLimitReached,
+  GroupNameMismatch,
+  GroupNotFound,
+  GroupSharingUnavailable,
   type IdempotencyConflict,
   type IdentityRepositoryFailure,
   InvalidArtifactGrant,
@@ -34,7 +38,15 @@ import {
   InvalidPagination,
   VersionNotFound,
 } from "../core/errors.js";
-import type { ArtifactGrantList } from "../core/artifact-grants.js";
+import {
+  artifactGranteeKinds,
+  type ArtifactGrantList,
+} from "../core/artifact-grants.js";
+import {
+  maximumGroupSearchCharacters,
+  minimumGroupSearchCharacters,
+  type DirectoryGroup,
+} from "../core/group-directory.js";
 import {
   mayChangeRestriction,
   isOwnerOrHumanAdministrator,
@@ -189,8 +201,44 @@ export interface ListArtifactsCommand {
 export interface ChangeArtifactGrantsCommand extends ReadArtifactCommand {
   /** Email addresses to add, as typed; normalized before they are stored. */
   readonly add: readonly string[];
+  /** Directory groups to add, each by its id and its exact name. */
+  readonly addGroups: readonly GroupReference[];
   /** Email addresses to remove, as typed; normalized before matching. */
   readonly remove: readonly string[];
+  /** Directory groups to remove, each by its id and the name it is shared under. */
+  readonly removeGroups: readonly GroupReference[];
+}
+
+/**
+ * A directory group as a caller names it. The name must be the group's own:
+ * it is what the person confirmed, so a differing name is refused.
+ */
+export interface GroupReference {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** Input for searching the directory's groups. */
+export interface SearchGroupsCommand {
+  readonly principal: Principal;
+  readonly query: string;
+}
+
+/**
+ * The installation's directory as artifact management uses it (decision
+ * 0034). Without a directory `available` is false and the lookups are never
+ * called.
+ */
+export interface GroupSharing {
+  readonly available: boolean;
+  readonly findGroup: (
+    groupId: string,
+  ) => Effect.Effect<DirectoryGroup | null, DirectoryUnavailable>;
+  /** The caller's directory groups; no group when they cannot be read. */
+  readonly groupIdsOf: (principalId: string) => Effect.Effect<readonly string[]>;
+  readonly searchGroups: (
+    query: string,
+  ) => Effect.Effect<readonly DirectoryGroup[], DirectoryUnavailable>;
 }
 
 /** Input for listing one artifact's attributed mutation history. */
@@ -296,6 +344,8 @@ export interface ArtifactManagementDependencies {
   readonly clock: ApplicationClock;
   /** Decides whether a member sees a restricted artifact through a grant. */
   readonly grants: ArtifactGrantLookup;
+  /** The installation's directory of groups, when it has one. */
+  readonly groups: GroupSharing;
   readonly principalNames: PrincipalNameDirectory;
   /** Installation switch that refuses new public links when off. */
   readonly publicLinks: PublicLinkPolicy;
@@ -314,6 +364,10 @@ export type ArtifactManagementFailure =
   | InvalidPagination
   | AuthorizationDenied
   | GrantLimitReached
+  | GroupSharingUnavailable
+  | GroupNotFound
+  | GroupNameMismatch
+  | DirectoryUnavailable
   | ArtifactRepositoryFailure
   | ProjectManagementFailure;
 
@@ -322,8 +376,8 @@ interface ArtifactManagementOperations {
     command: ChangeArtifactAccessCommand,
   ) => Effect.Effect<ArtifactAccessChange, ArtifactManagementFailure>;
   /**
-   * Add and remove people an artifact is shared with, for its owner or an
-   * administrator, and answer the resulting list.
+   * Add and remove people and directory groups an artifact is shared with,
+   * for its owner or an administrator, and answer the resulting list.
    */
   readonly changeGrants: (
     command: ChangeArtifactGrantsCommand,
@@ -358,6 +412,13 @@ interface ArtifactManagementOperations {
   readonly listVersions: (
     command: ReadArtifactCommand,
   ) => Effect.Effect<readonly VersionRecord[], ArtifactManagementFailure>;
+  /**
+   * Find directory groups by the start of a word of their name or by their
+   * exact mail address, for a signed-in member (AUTH-041).
+   */
+  readonly searchGroups: (
+    command: SearchGroupsCommand,
+  ) => Effect.Effect<readonly DirectoryGroup[], ArtifactManagementFailure>;
   /**
    * One page of an artifact's activity, newest first. Sharing rows (who was
    * added or removed) are listed only for its owner and administrators.
@@ -607,15 +668,18 @@ function makeArtifactManagementService(
       if (command.scope === "shared_with_me" && command.principal.kind !== principalKinds.human) {
         return {items: [], nextCursor: null};
       }
+      const groupIds = command.principal.kind === principalKinds.human
+        ? yield* dependencies.groups.groupIdsOf(command.principal.id)
+        : [];
       return yield* dependencies.repository.listArtifacts({
         comments,
         cursor: command.cursor,
         limit,
         ownerPrincipalId: command.scope === "mine" ? command.principal.id : null,
-        sharedWithGroupIds: [],
+        sharedWithGroupIds: groupIds,
         sharedWithPrincipalId: command.scope === "shared_with_me" ? command.principal.id : null,
         projectId: project.id,
-        restrictedScope: restrictedArtifactScope(command.principal, []),
+        restrictedScope: restrictedArtifactScope(command.principal, groupIds),
         search,
         sort,
         tags,
@@ -725,18 +789,91 @@ function makeArtifactManagementService(
           message: "An address cannot be added and removed in the same change.",
         });
       }
+      const groupsNamed = command.addGroups.length > 0 || command.removeGroups.length > 0;
+      if (groupsNamed && !dependencies.groups.available) {
+        return yield* new GroupSharingUnavailable({
+          message: "This installation has no directory, so artifacts cannot be shared with groups.",
+        });
+      }
+      if (command.addGroups.some(({id}) => command.removeGroups.some((removed) => removed.id === id))) {
+        return yield* new InvalidArtifactGrant({
+          message: "A group cannot be added and removed in the same change.",
+        });
+      }
+      const removeGroups = command.removeGroups.length === 0
+        ? []
+        : yield* grantedGroupIds(artifact, command.removeGroups);
+      const addGroups = yield* Effect.forEach(
+        new Map(command.addGroups.map((group) => [group.id, group])).values(),
+        verifiedGroup,
+        {concurrency: 4},
+      );
       const changedAt = DateTime.formatIso(yield* dependencies.clock.now);
       return yield* dependencies.repository.changeArtifactGrants({
         add,
-        addGroups: [],
+        addGroups,
         artifactId: artifact.id,
         authorizedByPrincipalId: command.principal.authorizedByPrincipalId,
         changedAt,
         principalId: command.principal.id,
         projectId: artifact.projectId,
         remove,
-        removeGroups: [],
+        removeGroups,
       });
+    },
+  );
+
+  // The group as the directory has it now; the caller's name must be its own.
+  const verifiedGroup = Effect.fn("ArtifactManagementService.verifiedGroup")(
+    function*(reference: GroupReference) {
+      const group = yield* dependencies.groups.findGroup(reference.id);
+      if (group === null) {
+        return yield* new GroupNotFound({message: "The directory has no such group."});
+      }
+      if (group.displayName !== reference.name) {
+        return yield* new GroupNameMismatch({
+          message: "The group's name in the directory differs from the name given.",
+        });
+      }
+      return {displayName: group.displayName, id: group.id};
+    },
+  );
+
+  // The ids to remove. A group that is not granted is skipped; a granted one
+  // must be named as it is shared, which needs no directory, so a group that
+  // left the directory can still be removed.
+  const grantedGroupIds = Effect.fn("ArtifactManagementService.grantedGroupIds")(
+    function*(artifact: ArtifactRecord, references: readonly GroupReference[]) {
+      const current = yield* dependencies.repository.listArtifactGrants(artifact.projectId, artifact.id);
+      const names = new Map(current.grants
+        .filter(({kind}) => kind === artifactGranteeKinds.group)
+        .map(({displayName, grantee}) => [grantee, displayName]));
+      if (references.some(({id, name}) => names.has(id) && names.get(id) !== name)) {
+        return yield* new GroupNameMismatch({
+          message: "The group is shared under another name than the name given.",
+        });
+      }
+      return [...new Set(references.map(({id}) => id))];
+    },
+  );
+
+  const searchGroups = Effect.fn("ArtifactManagementService.searchGroups")(
+    function*(command: SearchGroupsCommand) {
+      if (command.principal.kind !== principalKinds.human) {
+        return yield* new AuthorizationDenied({message: "Only members can search groups."});
+      }
+      if (!dependencies.groups.available) {
+        return yield* new GroupSharingUnavailable({
+          message: "This installation has no directory, so there are no groups to search.",
+        });
+      }
+      const query = command.query.trim();
+      if (query.length < minimumGroupSearchCharacters || query.length > maximumGroupSearchCharacters) {
+        return yield* new InvalidArtifactGrant({
+          message: `A group search needs ${minimumGroupSearchCharacters} to ${maximumGroupSearchCharacters} characters.`,
+        });
+      }
+      return yield* dependencies.groups.searchGroups(query);
     },
   );
 
@@ -909,6 +1046,7 @@ function makeArtifactManagementService(
   return ArtifactManagementService.of({
     changeAccess,
     changeGrants,
+    searchGroups,
     changeTags,
     deleteArtifact,
     getArtifact,

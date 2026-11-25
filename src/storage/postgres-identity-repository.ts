@@ -56,6 +56,8 @@ const principalNameRowSchema = z.object({
   displayName: z.string(),
   principalId: z.string(),
 });
+const externalSubjectRowSchema = z.object({subject: z.string()});
+
 const memberRowSchema = z.object({
   createdAt: z.string(),
   displayName: z.string(),
@@ -264,6 +266,23 @@ export class PostgresIdentityRepository implements BootstrapManagedApiKeyReposit
         "WHERE installation_id = $1 AND email = $2",
       ), [installationId, email]);
       return memberRowSchema.nullable().parse(rows[0] ?? null);
+    }));
+  }
+
+  async findExternalSubject(
+    installationId: string,
+    provider: string,
+    memberId: string,
+  ): Promise<string | null> {
+    this.#assertInstallationScope(installationId);
+    return this.#database.run(Effect.gen(function*() {
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<object>(
+        `SELECT subject FROM external_identities
+         WHERE installation_id = $1 AND provider = $2 AND member_id = $3`,
+        [installationId, provider, memberId],
+      );
+      return externalSubjectRowSchema.nullable().parse(rows[0] ?? null)?.subject ?? null;
     }));
   }
 

@@ -26,6 +26,16 @@ export interface GroupDirectory {
   searchGroups(query: string): Promise<readonly DirectoryGroup[]>;
 }
 
+/** A directory wired into an installation, and whose subjects it knows. */
+export interface GroupSharingConfiguration {
+  readonly directory: GroupDirectory;
+  /**
+   * The identity provider (as external identities are bound, for example
+   * `oidc:<issuer>`) whose subject is the person's id in this directory.
+   */
+  readonly identityProvider: string;
+}
+
 /** Upper bound of groups one search answers. */
 export const maximumGroupSearchResults = 10;
 

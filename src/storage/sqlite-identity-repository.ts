@@ -51,6 +51,8 @@ const principalCapabilitySchema = z.enum([
   principalCapabilities.readArtifacts,
   principalCapabilities.writeComments,
 ]);
+const externalSubjectRowSchema = z.object({subject: z.string()});
+
 const memberRowSchema = z.object({
   createdAt: z.string(),
   displayName: z.string(),
@@ -307,6 +309,20 @@ export class SqliteIdentityRepository implements BootstrapManagedApiKeyRepositor
       WHERE installation_id = ? AND email = ?
     `).get(installationId, email);
     return row === undefined ? null : memberRowSchema.parse(row);
+  }
+
+  findExternalSubject(
+    installationId: string,
+    provider: string,
+    memberId: string,
+  ): Promise<string | null> {
+    const row = this.#database.prepare(`
+      SELECT external.subject
+      FROM external_identities AS external
+      JOIN installation_members AS member ON member.id = external.member_id
+      WHERE member.installation_id = ? AND external.provider = ? AND external.member_id = ?
+    `).get(installationId, provider, memberId);
+    return Promise.resolve(row === undefined ? null : externalSubjectRowSchema.parse(row).subject);
   }
 
   async findMemberByExternalIdentity(

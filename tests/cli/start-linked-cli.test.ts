@@ -27,6 +27,7 @@ const sessionSchema = z.object({
       provider: z.literal("cloudflare-artifacts"),
       providerState: z.literal("misconfigured"),
     }).strict(),
+    groupSharing: z.boolean(),
     linkedArtifacts: z.boolean(),
     publicLinks: z.boolean(),
   }).strict(),
